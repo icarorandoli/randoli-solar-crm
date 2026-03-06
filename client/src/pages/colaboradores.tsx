@@ -8,8 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { insertColaboradorSchema, type Colaborador, type InsertColaborador } from "@shared/schema";
-import { UserPlus, Search, Pencil, Trash2, Shield, UserCheck } from "lucide-react";
+import { insertColaboradorSchema, type Colaborador, type InsertColaborador, type User } from "@shared/schema";
+import { UserPlus, Search, Pencil, Trash2, Shield, UserCheck, KeyRound, Eye, EyeOff, CheckCircle2 } from "lucide-react";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -17,9 +17,16 @@ export default function ColaboradoresPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editColaborador, setEditColaborador] = useState<Colaborador | null>(null);
+  const [acessoColaborador, setAcessoColaborador] = useState<Colaborador | null>(null);
+  const [showSenha, setShowSenha] = useState(false);
+  const [showSenha2, setShowSenha2] = useState(false);
+  const [novoUsername, setNovoUsername] = useState("");
+  const [novaSenha, setNovaSenha] = useState("");
+  const [novaSenha2, setNovaSenha2] = useState("");
   const { toast } = useToast();
 
   const { data: colaboradores, isLoading } = useQuery<Colaborador[]>({ queryKey: ["/api/colaboradores"] });
+  const { data: users } = useQuery<User[]>({ queryKey: ["/api/users"] });
 
   const form = useForm<InsertColaborador>({
     resolver: zodResolver(insertColaboradorSchema),
@@ -41,6 +48,26 @@ export default function ColaboradoresPage() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/colaboradores"] }); toast({ title: "Colaborador removido." }); },
   });
 
+  const createUserMutation = useMutation({
+    mutationFn: (data: { username: string; password: string; nome: string; cargo: string }) =>
+      apiRequest("POST", "/api/users", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Acesso criado com sucesso!", description: `Usuário "${novoUsername}" pode fazer login agora.` });
+      setAcessoColaborador(null);
+      setNovoUsername(""); setNovaSenha(""); setNovaSenha2("");
+    },
+    onError: () => toast({ title: "Erro ao criar acesso", variant: "destructive" }),
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/users/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Acesso removido." });
+    },
+  });
+
   const filtered = (colaboradores ?? []).filter(c =>
     c.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.email ?? "").toLowerCase().includes(searchTerm.toLowerCase())
@@ -51,6 +78,25 @@ export default function ColaboradoresPage() {
     form.reset({ nome: c.nome, cargo: c.cargo, email: c.email ?? "", telefone: c.telefone ?? "", cpfCnpj: c.cpfCnpj ?? "" });
     setShowForm(true);
   };
+
+  const openAcesso = (c: Colaborador) => {
+    setAcessoColaborador(c);
+    setNovoUsername(c.nome.toLowerCase().replace(/\s+/g, ".").normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+    setNovaSenha(""); setNovaSenha2("");
+  };
+
+  const handleCriarAcesso = () => {
+    if (!acessoColaborador) return;
+    if (!novoUsername.trim()) { toast({ title: "Usuário é obrigatório", variant: "destructive" }); return; }
+    if (novaSenha.length < 6) { toast({ title: "Senha deve ter ao menos 6 caracteres", variant: "destructive" }); return; }
+    if (novaSenha !== novaSenha2) { toast({ title: "As senhas não coincidem", variant: "destructive" }); return; }
+    const existingUser = (users ?? []).find(u => u.username === novoUsername);
+    if (existingUser) { toast({ title: "Usuário já existe. Escolha outro nome de usuário.", variant: "destructive" }); return; }
+    createUserMutation.mutate({ username: novoUsername, password: novaSenha, nome: acessoColaborador.nome, cargo: acessoColaborador.cargo });
+  };
+
+  const getColabUser = (c: Colaborador) =>
+    (users ?? []).find(u => u.nome.toLowerCase() === c.nome.toLowerCase());
 
   const onSubmit = (data: InsertColaborador) => {
     if (editColaborador) updateMutation.mutate({ id: editColaborador.id, data });
@@ -113,31 +159,47 @@ export default function ColaboradoresPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {filtered.map(c => (
-            <Card key={c.id} data-testid={`card-colaborador-${c.id}`} className="p-4 border border-card-border">
-              <div className="space-y-1 text-sm">
-                <p><span className="font-semibold">Nome:</span> <span className="font-bold">{c.nome}</span></p>
-                <p><span className="font-semibold">Cargo:</span> {c.cargo}</p>
-                {c.email && <p><span className="font-semibold">E-mail:</span> {c.email}</p>}
-                {c.telefone && <p><span className="font-semibold">Telefone:</span> {c.telefone}</p>}
-                {c.cpfCnpj && <p><span className="font-semibold">CPF/CNPJ:</span> {c.cpfCnpj}</p>}
-              </div>
-              <div className="flex items-center justify-between mt-3 pt-2 border-t border-border">
-                <div className="flex items-center gap-2">
-                  <button data-testid={`button-edit-col-${c.id}`} onClick={() => openEdit(c)} className="p-1 hover:text-primary text-muted-foreground transition-colors">
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button className="p-1 hover:text-primary text-muted-foreground transition-colors">
-                    <Shield className="w-4 h-4" />
-                  </button>
-                  <button data-testid={`button-delete-col-${c.id}`} onClick={() => deleteMutation.mutate(c.id)} className="p-1 hover:text-destructive text-muted-foreground transition-colors">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+          {filtered.map(c => {
+            const colabUser = getColabUser(c);
+            return (
+              <Card key={c.id} data-testid={`card-colaborador-${c.id}`} className="p-4 border border-card-border">
+                <div className="space-y-1 text-sm">
+                  <p><span className="font-semibold">Nome:</span> <span className="font-bold">{c.nome}</span></p>
+                  <p><span className="font-semibold">Cargo:</span> {c.cargo}</p>
+                  {c.email && <p><span className="font-semibold">E-mail:</span> {c.email}</p>}
+                  {c.telefone && <p><span className="font-semibold">Telefone:</span> {c.telefone}</p>}
+                  {c.cpfCnpj && <p><span className="font-semibold">CPF/CNPJ:</span> {c.cpfCnpj}</p>}
+                  {colabUser ? (
+                    <div className="flex items-center gap-1 text-green-600 text-xs font-medium pt-0.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Acesso: <strong>@{colabUser.username}</strong></span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground pt-0.5">Sem acesso ao sistema</p>
+                  )}
                 </div>
-                <span className="text-xs text-muted-foreground">{c.createdAt}</span>
-              </div>
-            </Card>
-          ))}
+                <div className="flex items-center justify-between mt-3 pt-2 border-t border-border">
+                  <div className="flex items-center gap-2">
+                    <button data-testid={`button-edit-col-${c.id}`} onClick={() => openEdit(c)} className="p-1 hover:text-primary text-muted-foreground transition-colors" title="Editar">
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      data-testid={`button-acesso-col-${c.id}`}
+                      onClick={() => openAcesso(c)}
+                      className={`p-1 transition-colors ${colabUser ? "text-green-600 hover:text-green-700" : "hover:text-primary text-muted-foreground"}`}
+                      title={colabUser ? "Gerenciar acesso" : "Criar acesso ao sistema"}
+                    >
+                      <Shield className="w-4 h-4" />
+                    </button>
+                    <button data-testid={`button-delete-col-${c.id}`} onClick={() => deleteMutation.mutate(c.id)} className="p-1 hover:text-destructive text-muted-foreground transition-colors" title="Remover">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{c.createdAt}</span>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -173,6 +235,117 @@ export default function ColaboradoresPage() {
               </div>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!acessoColaborador} onOpenChange={(open) => { if (!open) setAcessoColaborador(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-primary" />
+              Acesso ao Sistema — {acessoColaborador?.nome}
+            </DialogTitle>
+          </DialogHeader>
+
+          {acessoColaborador && (() => {
+            const colabUser = getColabUser(acessoColaborador);
+            return (
+              <div className="space-y-4">
+                {colabUser ? (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center gap-2 text-green-700 font-medium text-sm">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Acesso ativo
+                    </div>
+                    <p className="text-sm text-foreground">Usuário: <strong>@{colabUser.username}</strong></p>
+                    <p className="text-sm text-foreground">Cargo: {colabUser.cargo}</p>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="w-full mt-2"
+                      onClick={() => deleteUserMutation.mutate(colabUser.id)}
+                      disabled={deleteUserMutation.isPending}
+                      data-testid="button-remover-acesso"
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      {deleteUserMutation.isPending ? "Removendo..." : "Remover Acesso"}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Crie um login para <strong>{acessoColaborador.nome}</strong> acessar o sistema.
+                    </p>
+
+                    <div>
+                      <label className="text-sm font-medium block mb-1">Nome de usuário</label>
+                      <Input
+                        placeholder="ex: joao.silva"
+                        value={novoUsername}
+                        onChange={e => setNovoUsername(e.target.value.toLowerCase().replace(/\s+/g, "."))}
+                        data-testid="input-username-acesso"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium block mb-1">Senha</label>
+                      <div className="relative">
+                        <Input
+                          type={showSenha ? "text" : "password"}
+                          placeholder="Mínimo 6 caracteres"
+                          value={novaSenha}
+                          onChange={e => setNovaSenha(e.target.value)}
+                          data-testid="input-senha-acesso"
+                          className="pr-9"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                          onClick={() => setShowSenha(!showSenha)}
+                        >
+                          {showSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium block mb-1">Confirmar senha</label>
+                      <div className="relative">
+                        <Input
+                          type={showSenha2 ? "text" : "password"}
+                          placeholder="Repita a senha"
+                          value={novaSenha2}
+                          onChange={e => setNovaSenha2(e.target.value)}
+                          data-testid="input-senha2-acesso"
+                          className="pr-9"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                          onClick={() => setShowSenha2(!showSenha2)}
+                        >
+                          {showSenha2 ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <Button variant="outline" className="flex-1" onClick={() => setAcessoColaborador(null)}>Cancelar</Button>
+                      <Button
+                        className="flex-1"
+                        onClick={handleCriarAcesso}
+                        disabled={createUserMutation.isPending}
+                        data-testid="button-criar-acesso"
+                      >
+                        <Shield className="w-4 h-4 mr-1" />
+                        {createUserMutation.isPending ? "Criando..." : "Criar Acesso"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>
