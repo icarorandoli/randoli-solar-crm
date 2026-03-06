@@ -4,7 +4,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Printer, ArrowLeft, CheckCircle2, Sun, Zap, BarChart3, TrendingUp, FileText } from "lucide-react";
+import { Printer, ArrowLeft, CheckCircle2, Sun, Zap, BarChart3, TrendingUp, FileText, KanbanSquare } from "lucide-react";
 import type { Proposta, Kit } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import logoPath from "@/assets/randoli-solar-logo.png";
@@ -87,6 +87,9 @@ export default function PropostaView() {
           </Button>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">{proposta.visualizacoes ?? 0} visualização(ões)</span>
+            <Button size="sm" variant="outline" onClick={() => navigate("/vendas")} data-testid="button-ver-funil" className="gap-1">
+              <KanbanSquare className="w-4 h-4" /> Ver no Funil
+            </Button>
             <Button size="sm" onClick={handlePrint} data-testid="button-imprimir-proposta">
               <Printer className="w-4 h-4 mr-1" /> Imprimir / PDF
             </Button>
