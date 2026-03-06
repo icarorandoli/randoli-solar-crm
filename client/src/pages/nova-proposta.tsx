@@ -172,9 +172,15 @@ export default function NovaProposta() {
     mutationFn: (payload: Record<string, unknown>) => apiRequest("POST", "/api/propostas", payload),
     onSuccess: async (res) => {
       const data = await res.json();
-      queryClient.invalidateQueries({ queryKey: ["/api/propostas"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/vendas"] });
-      toast({ title: "Proposta gerada com sucesso! Card criado no funil de vendas." });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/propostas"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/vendas"] }),
+        queryClient.refetchQueries({ queryKey: ["/api/vendas"] }),
+      ]);
+      toast({
+        title: "Proposta gerada com sucesso!",
+        description: 'Card criado no funil na coluna "envio de proposta".',
+      });
       navigate(`/proposta/${data.id}`);
     },
     onError: () => toast({ title: "Erro ao gerar proposta", variant: "destructive" }),

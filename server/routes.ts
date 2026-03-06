@@ -374,6 +374,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!r.success) return res.status(400).json({ message: r.error.message });
     let data = r.data;
     if (!data.vendaId) {
+      const kit = data.kitId ? await storage.getKit(data.kitId) : null;
       const venda = await storage.createVenda({
         clienteNome: data.clienteNome,
         valor: data.totalFinal || data.valor,
@@ -381,16 +382,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         status: "envio de proposta",
         proprietario: "GERENTE",
         email: data.email ?? undefined,
-        cidade: data.cidade ?? undefined,
+        cidade: data.cidade ? `${data.cidade}${data.uf ? ` - ${data.uf}` : ""}` : undefined,
         endereco: data.endereco ?? undefined,
         potencia: data.potCalculada ?? "0,00",
+        modulos: kit?.modulos ?? 0,
+        inversores: kit?.inversores ?? 0,
         propostas: 1,
       });
       data = { ...data, vendaId: venda.id };
     } else {
       const venda = await storage.getVenda(data.vendaId);
       if (venda) {
-        await storage.updateVenda(data.vendaId, { propostas: (venda.propostas ?? 0) + 1 });
+        await storage.updateVenda(data.vendaId, {
+          propostas: (venda.propostas ?? 0) + 1,
+          status: "envio de proposta",
+          valor: data.totalFinal || data.valor || venda.valor,
+          kwp: data.potCalculada || data.kwp || venda.kwp,
+          potencia: data.potCalculada || venda.potencia,
+          email: data.email ?? venda.email,
+          cidade: data.cidade ?? venda.cidade,
+          endereco: data.endereco ?? venda.endereco,
+        });
       }
     }
     res.json(await storage.createProposta(data));
