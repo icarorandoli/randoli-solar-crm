@@ -14,7 +14,7 @@
 #  Funciona em paralelo com outros sistemas na mesma VPS.
 # ============================================================
 
-set -euo pipefail
+set -eo pipefail
 
 # ---- Cores ------------------------------------------------
 R='\033[0;31m'   # vermelho
@@ -117,13 +117,13 @@ else
 fi
 
 # Verificar sistemas já rodando
-USED_PORTS=$(ss -tlnp 2>/dev/null | grep -oP '(?<=:)\d+(?= )' | sort -n | tr '\n' ' ' || echo "")
+USED_PORTS=$(ss -tlnp 2>/dev/null | grep -oP '(?<=:)\d+(?= )' 2>/dev/null | sort -n | tr '\n' ' ' || true)
 [ -n "$USED_PORTS" ] && info "Portas em uso: $USED_PORTS" || info "Nenhuma porta em uso detectada"
 
 # Verificar PM2 já instalado
 PM2_APPS=""
 if command -v pm2 &>/dev/null; then
-  PM2_APPS=$(pm2 list 2>/dev/null | grep -oP '│\s+\K[a-zA-Z0-9_-]+(?=\s+│\s+\w+\s+│\s+online)' | tr '\n' ', ' || echo "")
+  PM2_APPS=$(pm2 list 2>/dev/null | grep -oP '│\s+\K[a-zA-Z0-9_-]+(?=\s+│\s+\w+\s+│\s+online)' 2>/dev/null | tr '\n' ', ' || true)
   [ -n "$PM2_APPS" ] && info "Apps PM2 rodando: ${PM2_APPS%,}" || info "PM2 instalado, sem apps ativos"
 fi
 
@@ -456,7 +456,7 @@ fi
 pm2 save > /dev/null 2>&1
 
 # Configurar PM2 para iniciar com o sistema (apenas se não estiver configurado)
-PM2_STARTUP=$(pm2 startup 2>&1 | grep "^sudo" | head -1)
+PM2_STARTUP=$(pm2 startup 2>&1 | grep "^sudo" | head -1 || true)
 if [ -n "$PM2_STARTUP" ]; then
   eval "$PM2_STARTUP" > /dev/null 2>&1 && ok "PM2 configurado para auto-start" || true
 else
