@@ -377,7 +377,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const venda = await storage.createVenda({
         clienteNome: data.clienteNome,
         valor: data.totalFinal || data.valor,
-        kwp: data.potCalculada || data.kwp,
+        kwp: data.potCalculada || data.kwp || "0,00",
         status: "envio de proposta",
         proprietario: "GERENTE",
         email: data.email ?? undefined,

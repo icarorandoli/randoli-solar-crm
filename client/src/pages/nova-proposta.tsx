@@ -185,7 +185,7 @@ export default function NovaProposta() {
     createMutation.mutate({
       clienteNome: d.clienteNome || "Cliente",
       valor: fmtBRL(vf),
-      kwp: parseFloat(d.potCalculada).toFixed(2),
+      kwp: (parseFloat(d.potCalculada) || 0).toFixed(2),
       status: "ABERTO",
       vendaId: d.vendaId || null,
       kitId: d.kitId || null,
