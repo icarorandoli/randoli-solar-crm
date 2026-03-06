@@ -506,8 +506,33 @@ module.exports = {
 }
 ECOEOF
 
-# Remover instância anterior se existir
-pm2 delete "$APP_NAME" > /dev/null 2>&1 || true
+# Remover instância anterior apenas se for do mesmo diretório (segurança)
+if command -v pm2 &>/dev/null && pm2 describe "$APP_NAME" > /dev/null 2>&1; then
+  EXISTING_CWD=$(pm2 jlist 2>/dev/null | python3 -c "
+import json,sys
+try:
+  apps=json.load(sys.stdin)
+  for a in apps:
+    if a.get('name','') == '${APP_NAME}':
+      print(a.get('pm2_env',{}).get('pm_cwd',''))
+      break
+except: pass
+" 2>/dev/null || true)
+  if [ -n "$EXISTING_CWD" ] && [ "$EXISTING_CWD" != "$INSTALL_DIR" ]; then
+    echo ""
+    warn "ATENÇÃO: Já existe um app PM2 chamado '$APP_NAME' rodando em:"
+    warn "  $EXISTING_CWD"
+    warn "Esse parece ser um sistema DIFERENTE do CRM."
+    echo ""
+    if ! prompt_yn "Tem CERTEZA que deseja substituí-lo? (isso vai parar o outro sistema)"; then
+      fail "Instalação cancelada para proteger o outro sistema."
+      echo ""
+      info "Dica: Execute novamente e escolha um nome diferente para o CRM (ex: randoli-crm)"
+      exit 1
+    fi
+  fi
+  pm2 delete "$APP_NAME" > /dev/null 2>&1 || true
+fi
 
 # Iniciar com o ecosystem file (variáveis de ambiente explícitas)
 pm2 start "$INSTALL_DIR/ecosystem.config.cjs" > /dev/null 2>&1
