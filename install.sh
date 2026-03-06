@@ -485,16 +485,33 @@ ok "Binário de produção: dist/index.cjs ✔"
 
 # PM2
 info "Configurando PM2..."
-if pm2 describe "$APP_NAME" > /dev/null 2>&1; then
-  pm2 restart "$APP_NAME" > /dev/null 2>&1
-  ok "App PM2 '$APP_NAME' reiniciado"
-else
-  pm2 start node \
-    --name "$APP_NAME" \
-    --cwd "$INSTALL_DIR" \
-    -- dist/index.cjs > /dev/null 2>&1
-  ok "App PM2 '$APP_NAME' iniciado (porta $PORT)"
-fi
+
+# Criar arquivo de configuração do PM2 (garante variáveis de ambiente corretas)
+cat > "$INSTALL_DIR/ecosystem.config.cjs" <<ECOEOF
+module.exports = {
+  apps: [{
+    name: '$APP_NAME',
+    script: 'dist/index.cjs',
+    cwd: '$INSTALL_DIR',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    env: {
+      NODE_ENV: 'production',
+      PORT: '$PORT',
+      SESSION_SECRET: '$SESSION_SECRET',
+      APP_DOMAIN: '${DOMAIN:-localhost}'
+    }
+  }]
+}
+ECOEOF
+
+# Remover instância anterior se existir
+pm2 delete "$APP_NAME" > /dev/null 2>&1 || true
+
+# Iniciar com o ecosystem file (variáveis de ambiente explícitas)
+pm2 start "$INSTALL_DIR/ecosystem.config.cjs" > /dev/null 2>&1
+ok "App PM2 '$APP_NAME' iniciado (porta $PORT)"
 pm2 save > /dev/null 2>&1
 
 PM2_STARTUP=$(pm2 startup 2>&1 | grep "^sudo" | head -1 || true)
