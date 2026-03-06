@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,7 @@ function FloatLabel({ label, children }: { label: string; children: React.ReactN
 
 export default function NovaProposta() {
   const [, navigate] = useLocation();
+  const searchStr = useSearch();
   const { toast } = useToast();
   const [step, setStep] = useState(1);
   const [kitView, setKitView] = useState<"options" | "list">("options");
@@ -98,6 +99,23 @@ export default function NovaProposta() {
   const upd = (field: string, value: string) => setD(prev => ({ ...prev, [field]: value }));
 
   const { data: clientes } = useQuery<Cliente[]>({ queryKey: ["/api/clientes"] });
+
+  useEffect(() => {
+    if (!clientes || !searchStr) return;
+    const params = new URLSearchParams(searchStr);
+    const clienteId = params.get("clienteId");
+    if (!clienteId) return;
+    const c = clientes.find(x => x.id === clienteId);
+    if (!c) return;
+    setD(prev => ({
+      ...prev,
+      clienteNome: c.nome ?? prev.clienteNome,
+      email: c.email ?? prev.email,
+      cidade: c.cidade ?? prev.cidade,
+      uf: c.estado ?? prev.uf,
+      endereco: c.endereco ?? prev.endereco,
+    }));
+  }, [clientes, searchStr]);
 
   const handleClienteNomeChange = (value: string) => {
     upd("clienteNome", value);

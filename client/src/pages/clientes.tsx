@@ -40,17 +40,47 @@ function FieldBox({ label, children, className }: { label: string; children: Rea
   );
 }
 
+function maskCPF(v: string) {
+  return v.replace(/\D/g, "").substring(0, 11)
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+}
+
 export default function ClientesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editCliente, setEditCliente] = useState<Cliente | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
+  const [cepLoading, setCepLoading] = useState(false);
   const [, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: clientes, isLoading } = useQuery<Cliente[]>({ queryKey: ["/api/clientes"] });
 
   const upd = (field: keyof FormData, value: string) => setForm(prev => ({ ...prev, [field]: value }));
+
+  const handleCepChange = async (value: string) => {
+    upd("cep", value);
+    const cleaned = value.replace(/\D/g, "");
+    if (cleaned.length === 8) {
+      setCepLoading(true);
+      try {
+        const res = await fetch(`https://viacep.com.br/ws/${cleaned}/json/`);
+        const data = await res.json();
+        if (!data.erro) {
+          setForm(prev => ({
+            ...prev,
+            cep: value,
+            endereco: `${data.logradouro}${data.bairro ? ", " + data.bairro : ""}`,
+            cidade: data.localidade ?? prev.cidade,
+            estado: data.uf ?? prev.estado,
+          }));
+        }
+      } catch { }
+      setCepLoading(false);
+    }
+  };
 
   const createMutation = useMutation({
     mutationFn: (data: FormData) => apiRequest("POST", "/api/clientes", data),
@@ -63,7 +93,7 @@ export default function ClientesPage() {
       const res = await apiRequest("POST", "/api/clientes", data);
       return res.json();
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/clientes"] }); setShowForm(false); setForm(emptyForm); navigate("/propostas/nova"); toast({ title: "Cliente cadastrado! Abrindo proposta..." }); },
+    onSuccess: (cliente: any) => { queryClient.invalidateQueries({ queryKey: ["/api/clientes"] }); setShowForm(false); setForm(emptyForm); navigate(`/propostas/nova?clienteId=${cliente.id}`); toast({ title: "Cliente cadastrado! Abrindo proposta..." }); },
     onError: () => toast({ title: "Erro ao cadastrar cliente", variant: "destructive" }),
   });
 
@@ -153,7 +183,7 @@ export default function ClientesPage() {
               <div className="w-4 h-4 rounded-full bg-white shadow-sm ml-auto" />
             </button>
             <span className="text-sm font-medium text-foreground">CPF</span>
-            <Input data-testid="input-cpf-cliente" placeholder="CPF" value={form.cpf} onChange={e => upd("cpf", e.target.value)} className="flex-1 text-sm" />
+            <Input data-testid="input-cpf-cliente" placeholder="000.000.000-00" value={form.cpf} onChange={e => upd("cpf", maskCPF(e.target.value))} className="flex-1 text-sm" />
           </div>
 
           <div className="grid grid-cols-2 gap-2 mb-2">
@@ -162,7 +192,10 @@ export default function ClientesPage() {
           </div>
 
           <div className="grid grid-cols-3 gap-2 mb-2">
-            <Input placeholder="CEP" value={form.cep} onChange={e => upd("cep", e.target.value)} className="text-sm" />
+            <div className="relative">
+              <Input placeholder="CEP" value={form.cep} onChange={e => handleCepChange(e.target.value)} className="text-sm" />
+              {cepLoading && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">...</span>}
+            </div>
             <Input placeholder="Endereço" value={form.endereco} onChange={e => upd("endereco", e.target.value)} className="text-sm col-span-2" />
           </div>
 

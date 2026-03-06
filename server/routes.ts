@@ -5,7 +5,7 @@ import multer from "multer";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import { insertClienteSchema, insertVendaSchema, insertKitSchema, insertColaboradorSchema, insertContratoSchema, insertProjetoSchema, insertObraSchema, insertAtividadeSchema, insertAgendaItemSchema, insertPropostaSchema } from "@shared/schema";
-import type { Venda } from "@shared/schema";
+import type { Venda, Cliente, Proposta } from "@shared/schema";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import passport from "passport";
@@ -26,11 +26,13 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-function buildTagData(venda: Venda): Record<string, any> {
+function buildTagData(venda: Venda, cliente?: Cliente | null, proposta?: Proposta | null): Record<string, any> {
   const hoje = new Date().toLocaleDateString("pt-BR");
   const cidade = (venda.cidade ?? "").split(" - ");
   const cidadeNome = cidade[0] ?? "";
   const uf = cidade[1] ?? "";
+  const condPag = proposta?.condicoesPagamento ?? "";
+  const nContrato = proposta ? `${new Date().getFullYear()}-${proposta.id.substring(0, 4).toUpperCase()}` : "";
 
   return {
     nome_empresa: "RANDOLI SOLAR",
@@ -47,30 +49,30 @@ function buildTagData(venda: Venda): Record<string, any> {
     nome_cliente: venda.clienteNome ?? "",
     uf_cliente: uf,
     cidade_cliente: cidadeNome,
-    email_cliente: venda.email ?? "",
-    telefone_cliente: venda.telefone ?? "",
-    whatsapp_cliente: venda.telefone ?? "",
-    documento_cliente: venda.cpf ?? "",
-    endereco_cliente: venda.endereco ?? "",
-    rg_cliente: "",
-    nac_cliente: "Brasileiro(a)",
-    prof_cliente: "",
+    email_cliente: venda.email ?? cliente?.email ?? "",
+    telefone_cliente: venda.telefone ?? cliente?.telefone ?? "",
+    whatsapp_cliente: venda.telefone ?? cliente?.whatsapp ?? "",
+    documento_cliente: venda.cpf ?? cliente?.cpf ?? "",
+    endereco_cliente: venda.endereco ?? cliente?.endereco ?? "",
+    rg_cliente: cliente?.rg ?? "",
+    nac_cliente: cliente?.nacionalidade ?? "Brasileiro(a)",
+    prof_cliente: cliente?.profissao ?? "",
     nome_resp_cliente: venda.clienteNome ?? "",
-    cpf_resp_cliente: venda.cpf ?? "",
-    observacoes_cliente: "",
+    cpf_resp_cliente: venda.cpf ?? cliente?.cpf ?? "",
+    observacoes_cliente: cliente?.observacoes ?? "",
 
     valor_venda: `R$ ${venda.valor}`,
     potencia_sistema: `${venda.kwp} kWp`,
-    condicoes_de_pagamento: "",
-    condicoes_de_pagamento_venda: "",
-    validade_proposta: venda.validade ?? "",
+    condicoes_de_pagamento: condPag,
+    condicoes_de_pagamento_venda: condPag,
+    validade_proposta: venda.validade ?? proposta?.validade ?? "",
 
-    numero_da_proposta: venda.id.substring(0, 6).toUpperCase(),
-    data_validade: venda.validade ?? "",
-    dias_validade: "30",
+    numero_da_proposta: proposta ? proposta.id.substring(0, 6).toUpperCase() : venda.id.substring(0, 6).toUpperCase(),
+    data_validade: proposta?.dataValidade ?? venda.validade ?? "",
+    dias_validade: proposta?.validade ?? "30",
     data_registro: (venda.createdAt ?? "").split(" | ")[0] ?? "",
-    cond_pag: "",
-    cond_pag_venda: "",
+    cond_pag: condPag,
+    cond_pag_venda: condPag,
     fornecedor: "",
     est_fix: "",
 
@@ -144,7 +146,7 @@ function buildTagData(venda: Venda): Record<string, any> {
     vl_ecn_sist_fv: "",
     ecn_tot: "",
 
-    n_contrato: "",
+    n_contrato: nContrato,
     data_do_dia: hoje,
 
     cons_finais_t: "",
@@ -312,14 +314,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/contratos/:id/gerar/:vendaId", async (req: Request, res: Response) => {
     try {
       const { id, vendaId } = req.params;
-      const [contrato, venda] = await Promise.all([
+      const [contrato, venda, todosClientes, todasPropostas] = await Promise.all([
         storage.getContrato(id),
         storage.getVenda(vendaId),
+        storage.getClientes(),
+        storage.getPropostas(),
       ]);
 
       if (!contrato) return res.status(404).json({ message: "Contrato não encontrado" });
       if (!venda) return res.status(404).json({ message: "Venda não encontrada" });
       if (!contrato.templateData) return res.status(400).json({ message: "Este contrato não possui um modelo Word anexado. Faça o upload do arquivo .docx primeiro." });
+
+      const cliente = todosClientes.find(c => c.nome.toLowerCase() === (venda.clienteNome ?? "").toLowerCase()) ?? null;
+      const propostasVenda = todasPropostas.filter(p => p.vendaId === vendaId);
+      const proposta = propostasVenda.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))[0] ?? null;
 
       const buffer = Buffer.from(contrato.templateData, "base64");
       const zip = new PizZip(buffer);
@@ -331,7 +339,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         nullGetter: () => "",
       });
 
-      const tagData = buildTagData(venda);
+      const tagData = buildTagData(venda, cliente, proposta);
       doc.render(tagData);
 
       const output = doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" });
