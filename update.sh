@@ -52,9 +52,24 @@ DOMAIN_VAL="${DOMAIN_VAL:-localhost}"
 
 # ── 5. Detectar nome do app no PM2 ───────────────────────────
 APP_NAME=""
-if command -v pm2 &>/dev/null; then
-  APP_NAME=$(pm2 list --no-color 2>/dev/null | grep -oE 'randoli[a-zA-Z0-9_-]*|crm-[a-zA-Z0-9_-]*' | head -1 || true)
+# 1) Tenta ler do ecosystem.config.cjs existente (mais confiável)
+if [ -f "ecosystem.config.cjs" ]; then
+  APP_NAME=$(grep -oP "name: '[^']+'" ecosystem.config.cjs 2>/dev/null | head -1 | grep -oP "'[^']+'" | tr -d "'" || true)
 fi
+# 2) Fallback: detecta pelo CWD no PM2 (não confunde com outros apps)
+if [ -z "$APP_NAME" ] && command -v pm2 &>/dev/null; then
+  APP_NAME=$(pm2 jlist 2>/dev/null | python3 -c "
+import json,sys
+try:
+  apps=json.load(sys.stdin)
+  for a in apps:
+    if a.get('pm2_env',{}).get('pm_cwd','') == '${INSTALL_DIR}':
+      print(a.get('name',''))
+      break
+except: pass
+" 2>/dev/null || true)
+fi
+# 3) Default seguro
 APP_NAME="${APP_NAME:-randoli-crm}"
 
 # ── 6. Recriar ecosystem.config.cjs ──────────────────────────
