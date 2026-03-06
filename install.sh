@@ -4,6 +4,9 @@
 #  Versão 2.0
 # ================================================================
 
+# Redireciona stdin para o terminal mesmo quando executado via pipe (curl | bash)
+exec < /dev/tty
+
 set -e
 
 # --- Cores ---
