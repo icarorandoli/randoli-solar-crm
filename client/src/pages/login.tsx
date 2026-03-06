@@ -29,10 +29,12 @@ export default function LoginPage() {
   });
 
   const loginMutation = useMutation({
-    mutationFn: (data: LoginForm) =>
-      apiRequest("POST", "/api/auth/login", data),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    mutationFn: async (data: LoginForm) => {
+      const res = await apiRequest("POST", "/api/auth/login", data);
+      return res.json();
+    },
+    onSuccess: (user) => {
+      queryClient.setQueryData(["/api/auth/me"], user);
       navigate("/");
     },
     onError: (error: any) => {
