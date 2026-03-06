@@ -1,274 +1,390 @@
 #!/bin/bash
-# ================================================================
-#  RANDOLI SOLAR CRM — Instalador Interativo v2.1
-#  Compatível com: bash install.sh  E  curl URL | bash
-# ================================================================
-set -e
+# ============================================================
+#  RANDOLI SOLAR CRM — Instalador Completo v3.0
+#  Compatível com: bash install.sh   |   curl URL | bash
+# ============================================================
+#
+#  O que este script instala:
+#    • Node.js 20 (se não instalado)
+#    • PM2 (gerenciador de processos)
+#    • Nginx (proxy reverso)
+#    • Certbot (SSL gratuito — opcional)
+#    • Randoli Solar CRM (clone + build + start)
+#
+#  Funciona em paralelo com outros sistemas na mesma VPS.
+# ============================================================
 
-# --- Cores ---
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+set -euo pipefail
 
-# --- Funções de output (sempre para stderr para não poluir capturas) ---
-ok()    { echo -e "${GREEN}  ✔  $1${NC}" >&2; }
-info()  { echo -e "${CYAN}  →  $1${NC}" >&2; }
-warn()  { echo -e "${YELLOW}  ⚠  $1${NC}" >&2; }
-error() { echo -e "${RED}  ✘  $1${NC}" >&2; }
-sep()   { echo -e "${CYAN}────────────────────────────────────────────────────${NC}" >&2; }
-br()    { echo "" >&2; }
+# ---- Cores ------------------------------------------------
+R='\033[0;31m'   # vermelho
+G='\033[0;32m'   # verde
+Y='\033[1;33m'   # amarelo
+C='\033[0;36m'   # ciano
+B='\033[1m'      # negrito
+N='\033[0m'      # reset
 
-# ----------------------------------------------------------------
-# Leitura interativa — SEMPRE de /dev/tty, prompt para stderr
-# ----------------------------------------------------------------
-ask_input() {
-  # Uso: ask_input "Pergunta" "padrão"  → imprime valor em stdout
-  local prompt="$1"
-  local default="$2"
-  local result
+# ---- Helpers ----------------------------------------------
+ok()   { echo -e "${G}  ✔  ${1}${N}"; }
+fail() { echo -e "${R}  ✘  ${1}${N}"; }
+info() { echo -e "${C}  ▶  ${1}${N}"; }
+warn() { echo -e "${Y}  ⚠  ${1}${N}"; }
+step() { echo -e "\n${B}${Y}━━━  ${1}  ━━━${N}\n"; }
+line() { echo -e "${C}──────────────────────────────────────────────────${N}"; }
 
-  if [ -n "$default" ]; then
-    printf "${BOLD}  → %s [%s]: ${NC}" "$prompt" "$default" >&2
+# Prompt direto do terminal (funciona com curl | bash)
+prompt() {
+  # uso: prompt "Mensagem" "padrão" VARIAVEL
+  local msg="$1" def="$2" var="$3"
+  if [ -n "$def" ]; then
+    printf "${B}  ➤  %s [%s]: ${N}" "$msg" "$def" > /dev/tty
   else
-    printf "${BOLD}  → %s: ${NC}" "$prompt" >&2
+    printf "${B}  ➤  %s: ${N}" "$msg" > /dev/tty
   fi
-
-  read -r result < /dev/tty
-  printf '%s' "${result:-$default}"
+  local val
+  read -r val < /dev/tty
+  val="${val:-$def}"
+  eval "$var='$val'"
 }
 
-ask_password() {
-  # Uso: ask_password "Pergunta"  → imprime valor em stdout
-  local prompt="$1"
-  local result
-
-  printf "${BOLD}  → %s: ${NC}" "$prompt" >&2
-  read -rs result < /dev/tty
-  echo "" >&2
-  printf '%s' "$result"
+prompt_secret() {
+  local msg="$1" var="$2"
+  printf "${B}  ➤  %s: ${N}" "$msg" > /dev/tty
+  local val
+  read -rs val < /dev/tty
+  echo "" > /dev/tty
+  eval "$var='$val'"
 }
 
-ask_yesno() {
-  # Uso: ask_yesno "Pergunta"  → retorna 0 (sim) ou 1 (não)
-  local prompt="$1"
-  local default="${2:-s}"
-  local result
-
-  printf "${BOLD}  → %s [S/n]: ${NC}" "$prompt" >&2
-  read -r result < /dev/tty
-  result="${result:-$default}"
-  [[ "$result" =~ ^[Ss]$ ]]
+prompt_yn() {
+  # Retorna 0=sim 1=não
+  local msg="$1" def="${2:-s}"
+  printf "${B}  ➤  %s [S/n]: ${N}" "$msg" > /dev/tty
+  local val
+  read -r val < /dev/tty
+  val="${val:-$def}"
+  [[ "$val" =~ ^[Ss]$ ]]
 }
 
-# --- Validações ---
-validate_domain() {
-  echo "$1" | grep -qP '^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$' 2>/dev/null || \
-  echo "$1" | grep -qE '^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
-}
-validate_email() {
-  echo "$1" | grep -qE '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-}
-validate_port() {
-  [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1024 ] && [ "$1" -le 65535 ]
+check_port_free() {
+  ! ss -tlnp 2>/dev/null | grep -q ":${1} " && \
+  ! lsof -i ":${1}" 2>/dev/null | grep -q LISTEN
 }
 
-# ================================================================
+# ============================================================
 #  BANNER
-# ================================================================
+# ============================================================
 clear
-echo -e "${CYAN}${BOLD}" >&2
-echo "  ██████╗  █████╗ ███╗   ██╗██████╗  ██████╗ ██╗     ██╗" >&2
-echo "  ██╔══██╗██╔══██╗████╗  ██║██╔══██╗██╔═══██╗██║     ██║" >&2
-echo "  ██████╔╝███████║██╔██╗ ██║██║  ██║██║   ██║██║     ██║" >&2
-echo "  ██╔══██╗██╔══██║██║╚██╗██║██║  ██║██║   ██║██║     ██║" >&2
-echo "  ██║  ██║██║  ██║██║ ╚████║██████╔╝╚██████╔╝███████╗██║" >&2
-echo "  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝  ╚═════╝ ╚══════╝╚═╝" >&2
-echo -e "${NC}" >&2
-echo -e "${BOLD}         ☀  SOLAR CRM — Instalador Interativo v2.1${NC}" >&2
-br
+echo ""
+echo -e "${C}${B}"
+echo "   ┌─────────────────────────────────────────────────┐"
+echo "   │       ☀  RANDOLI SOLAR CRM                      │"
+echo "   │       Instalador Completo v3.0                   │"
+echo "   │       Sistema de CRM para Energia Solar          │"
+echo "   └─────────────────────────────────────────────────┘"
+echo -e "${N}"
+echo -e "  Node.js 20 + Express + React + PM2 + Nginx + SSL"
+echo ""
+line
 
-# ================================================================
-#  ETAPA 1 — CONFIGURAÇÃO DA APLICAÇÃO
-# ================================================================
-echo -e "${BOLD}${YELLOW}[1/4] CONFIGURAÇÃO DA APLICAÇÃO${NC}" >&2
-br
+# ============================================================
+#  PRÉ-VERIFICAÇÃO DO SISTEMA
+# ============================================================
+step "PRÉ-VERIFICAÇÃO"
+
+# Verificar SO
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  info "Sistema: $PRETTY_NAME"
+else
+  warn "Não foi possível identificar o SO. Continuando..."
+fi
+
+# Verificar sudo
+if ! sudo -n true 2>/dev/null; then
+  warn "Este script precisa de permissão sudo."
+  echo ""
+  sudo -v || { fail "Sem acesso sudo. Abortando."; exit 1; }
+fi
+ok "Permissão sudo OK"
+
+# Verificar espaço em disco (mínimo 2GB)
+DISK_FREE=$(df / | awk 'NR==2 {print $4}')
+if [ "$DISK_FREE" -lt 2097152 ]; then
+  warn "Menos de 2GB livres em disco. Pode causar problemas."
+else
+  ok "Espaço em disco OK ($(( DISK_FREE / 1024 ))MB livres)"
+fi
+
+# Verificar sistemas já rodando
+USED_PORTS=$(ss -tlnp 2>/dev/null | grep -oP '(?<=:)\d+(?= )' | sort -n | tr '\n' ' ' || echo "")
+[ -n "$USED_PORTS" ] && info "Portas em uso: $USED_PORTS" || info "Nenhuma porta em uso detectada"
+
+# Verificar PM2 já instalado
+PM2_APPS=""
+if command -v pm2 &>/dev/null; then
+  PM2_APPS=$(pm2 list 2>/dev/null | grep -oP '│\s+\K[a-zA-Z0-9_-]+(?=\s+│\s+\w+\s+│\s+online)' | tr '\n' ', ' || echo "")
+  [ -n "$PM2_APPS" ] && info "Apps PM2 rodando: ${PM2_APPS%,}" || info "PM2 instalado, sem apps ativos"
+fi
+
+echo ""
+
+# ============================================================
+#  PASSO 1 — CONFIGURAÇÃO DA APLICAÇÃO
+# ============================================================
+step "PASSO 1/5 — CONFIGURAÇÃO DA APLICAÇÃO"
 
 # Nome da aplicação
-APP_NAME=$(ask_input "Nome da aplicação (sem espaços)" "randoli-crm")
-APP_NAME=$(echo "$APP_NAME" | sed 's/ /-/g' | tr '[:upper:]' '[:lower:]')
+prompt "Nome da aplicação (sem espaços, sem acentos)" "randoli-crm" APP_NAME
+APP_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-')
+[ -z "$APP_NAME" ] && APP_NAME="randoli-crm"
 ok "Nome: $APP_NAME"
 
-# Diretório
-INSTALL_DIR=$(ask_input "Diretório de instalação" "/var/www/$APP_NAME")
+# Diretório de instalação
+prompt "Diretório de instalação" "/var/www/$APP_NAME" INSTALL_DIR
 ok "Diretório: $INSTALL_DIR"
 
-# Porta
-PORT=""
+# Porta (verificar se está livre)
+echo "" > /dev/tty
+info "Dica: se já tem outro sistema rodando na porta 5000, use 5001 ou outra livre."
 while true; do
-  PORT=$(ask_input "Porta do servidor (use 5001+ se já tem outro sistema na 5000)" "5001")
-  if validate_port "$PORT"; then
-    ok "Porta: $PORT"
-    break
+  prompt "Porta do servidor" "5001" PORT
+  if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ]; then
+    if check_port_free "$PORT"; then
+      ok "Porta $PORT está livre ✔"
+      break
+    else
+      fail "Porta $PORT já está em uso! Escolha outra."
+    fi
   else
-    error "Porta inválida. Use um número entre 1024 e 65535."
+    fail "Porta inválida. Use um número entre 1024 e 65535."
   fi
 done
 
-# URL do repositório
-REPO_URL=$(ask_input "URL do repositório Git" "https://github.com/icarorandoli/randoli-solar-crm.git")
+# URL do repositório Git
+prompt "URL do repositório Git" "https://github.com/icarorandoli/randoli-solar-crm.git" REPO_URL
 ok "Repositório: $REPO_URL"
 
-br
+# Token Git (para repositório privado)
+echo ""
+info "Se o repositório for privado, informe seu Personal Access Token do GitHub."
+info "Deixe em branco se for público ou se já configurou git credentials."
+prompt "GitHub Token (deixe vazio se público)" "" GIT_TOKEN
+if [ -n "$GIT_TOKEN" ]; then
+  # Embutir token na URL
+  REPO_DOMAIN=$(echo "$REPO_URL" | sed 's|https://github.com/|github.com/|')
+  REPO_URL="https://${GIT_TOKEN}@${REPO_DOMAIN}"
+  ok "Token GitHub configurado"
+else
+  ok "Repositório público (sem token)"
+fi
 
-# ================================================================
-#  ETAPA 2 — DOMÍNIO E SSL
-# ================================================================
-echo -e "${BOLD}${YELLOW}[2/4] DOMÍNIO E SSL${NC}" >&2
-br
+# ============================================================
+#  PASSO 2 — DOMÍNIO E SSL
+# ============================================================
+step "PASSO 2/5 — DOMÍNIO E SSL"
+
+info "Informe o domínio que vai apontar para este servidor."
+info "Ex: crm.randolisolar.com.br"
+info "Deixe vazio para acessar apenas por IP (pode configurar depois)."
+echo ""
 
 DOMAIN=""
 while true; do
-  DOMAIN=$(ask_input "Domínio (ex: crm.randolisolar.com.br) — Enter para pular" "")
+  prompt "Domínio (Enter para pular)" "" DOMAIN
   if [ -z "$DOMAIN" ]; then
-    warn "Sem domínio. Acesso disponível por IP:$PORT"
+    warn "Sem domínio. Acesso via http://SEU_IP:${PORT}"
     break
-  elif validate_domain "$DOMAIN"; then
+  elif echo "$DOMAIN" | grep -qE '^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'; then
     ok "Domínio: $DOMAIN"
     break
   else
-    error "Domínio inválido. Formato esperado: subdominio.seudominio.com.br"
+    fail "Domínio inválido. Formato esperado: crm.seudominio.com.br"
   fi
 done
 
 CONFIGURE_SSL="n"
 SSL_EMAIL=""
 if [ -n "$DOMAIN" ]; then
-  if ask_yesno "Configurar SSL gratuito (Let's Encrypt)?"; then
+  echo ""
+  info "O SSL (HTTPS) é gratuito via Let's Encrypt."
+  info "ATENÇÃO: O domínio precisa já estar apontando para este servidor (DNS configurado)."
+  echo ""
+  if prompt_yn "Configurar SSL gratuito (Let's Encrypt)?"; then
     CONFIGURE_SSL="s"
     while true; do
-      SSL_EMAIL=$(ask_input "E-mail para o certificado SSL" "contato@randolisolar.com.br")
-      if validate_email "$SSL_EMAIL"; then
+      prompt "E-mail para o certificado SSL" "contato@randolisolar.com.br" SSL_EMAIL
+      if echo "$SSL_EMAIL" | grep -qE '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'; then
         ok "E-mail SSL: $SSL_EMAIL"
         break
       else
-        error "E-mail inválido."
+        fail "E-mail inválido."
       fi
     done
   else
-    warn "SSL não será configurado agora."
+    warn "SSL não configurado agora. Configure depois com: sudo certbot --nginx -d $DOMAIN"
   fi
 fi
 
-br
+# ============================================================
+#  PASSO 3 — SEGURANÇA
+# ============================================================
+step "PASSO 3/5 — SEGURANÇA"
 
-# ================================================================
-#  ETAPA 3 — SEGURANÇA
-# ================================================================
-echo -e "${BOLD}${YELLOW}[3/4] SEGURANÇA${NC}" >&2
-br
-
-AUTO_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null \
+# Gerar SESSION_SECRET automático
+AUTO_SECRET=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null \
   || openssl rand -hex 32 2>/dev/null \
-  || cat /dev/urandom | tr -dc 'a-f0-9' | head -c 64)
+  || (cat /dev/urandom | tr -dc 'a-f0-9' | head -c 64; echo))
 
-echo -e "  ${CYAN}Chave secreta gerada: ${YELLOW}${AUTO_SECRET:0:16}...${NC}" >&2
-
-SESSION_SECRET="$AUTO_SECRET"
-if ! ask_yesno "Usar chave gerada automaticamente? (recomendado)"; then
+echo ""
+info "Chave secreta gerada: ${AUTO_SECRET:0:12}...${AUTO_SECRET: -8}"
+echo ""
+if prompt_yn "Usar chave gerada automaticamente? (recomendado)"; then
+  SESSION_SECRET="$AUTO_SECRET"
+  ok "Chave secreta: automática"
+else
   while true; do
-    SESSION_SECRET=$(ask_password "Digite sua chave secreta (mínimo 32 caracteres)")
-    if [ ${#SESSION_SECRET} -ge 32 ]; then
-      ok "Chave secreta: configurada manualmente"
+    prompt_secret "Digite sua chave secreta (mínimo 32 caracteres)" SESSION_SECRET
+    LEN=${#SESSION_SECRET}
+    if [ "$LEN" -ge 32 ]; then
+      ok "Chave secreta: configurada ($LEN caracteres)"
       break
     else
-      error "A chave precisa ter pelo menos 32 caracteres (você digitou ${#SESSION_SECRET})."
+      fail "Chave muito curta ($LEN caracteres). Mínimo: 32."
     fi
   done
-else
-  ok "Chave secreta: gerada automaticamente"
 fi
 
-br
-
-# ================================================================
-#  RESUMO E CONFIRMAÇÃO
-# ================================================================
-sep
-echo -e "${BOLD}${YELLOW}  RESUMO DA INSTALAÇÃO${NC}" >&2
-sep
-br
-echo -e "  ${BOLD}Aplicação:${NC}   $APP_NAME" >&2
-echo -e "  ${BOLD}Diretório:${NC}   $INSTALL_DIR" >&2
-echo -e "  ${BOLD}Porta:${NC}       $PORT" >&2
-echo -e "  ${BOLD}Repositório:${NC} $REPO_URL" >&2
+# ============================================================
+#  RESUMO — CONFIRMAÇÃO
+# ============================================================
+echo ""
+line
+echo -e "${B}${Y}  RESUMO DA INSTALAÇÃO${N}"
+line
+echo ""
+echo -e "  ${B}Aplicação:${N}      $APP_NAME"
+echo -e "  ${B}Diretório:${N}      $INSTALL_DIR"
+echo -e "  ${B}Porta:${N}          $PORT"
 if [ -n "$DOMAIN" ]; then
-  echo -e "  ${BOLD}Domínio:${NC}     $DOMAIN" >&2
-  echo -e "  ${BOLD}SSL:${NC}         $([ "$CONFIGURE_SSL" = "s" ] && echo "Sim — $SSL_EMAIL" || echo "Não")" >&2
+  echo -e "  ${B}Domínio:${N}        $DOMAIN"
+  echo -e "  ${B}SSL:${N}            $([ "$CONFIGURE_SSL" = "s" ] && echo "Sim (Let's Encrypt — $SSL_EMAIL)" || echo "Não")"
 else
-  echo -e "  ${BOLD}Domínio:${NC}     não configurado (IP:$PORT)" >&2
+  echo -e "  ${B}Domínio:${N}        Não configurado (acesso por IP:$PORT)"
 fi
-echo -e "  ${BOLD}Secret:${NC}      ${SESSION_SECRET:0:8}...${SESSION_SECRET: -8}" >&2
-br
-sep
-br
+echo -e "  ${B}Session Secret:${N} ${SESSION_SECRET:0:8}...${SESSION_SECRET: -8}"
+echo ""
+line
+echo ""
+echo -e "${Y}  Nenhum sistema existente será interrompido.${N}"
+echo -e "${Y}  Um novo processo PM2 e um novo site Nginx serão criados.${N}"
+echo ""
 
-if ! ask_yesno "Confirmar e iniciar instalação?"; then
-  warn "Instalação cancelada."
+if ! prompt_yn "Confirmar e iniciar instalação?"; then
+  warn "Instalação cancelada pelo usuário."
   exit 0
 fi
 
-br
-echo -e "${BOLD}${CYAN}[4/4] INSTALANDO...${NC}" >&2
-br
+# ============================================================
+#  PASSO 4 — INSTALAÇÃO DAS DEPENDÊNCIAS
+# ============================================================
+step "PASSO 4/5 — INSTALANDO DEPENDÊNCIAS DO SISTEMA"
 
-# ================================================================
-#  INSTALAÇÃO
-# ================================================================
+# Atualizar lista de pacotes (silencioso)
+info "Atualizando lista de pacotes..."
+sudo apt-get update -qq > /dev/null 2>&1
+ok "Lista de pacotes atualizada"
 
-# --- Node.js ---
-if ! command -v node &> /dev/null; then
+# --- Node.js 20 ---
+if command -v node &>/dev/null && node -e "process.exit(parseInt(process.version.slice(1)) >= 20 ? 0 : 1)" 2>/dev/null; then
+  ok "Node.js $(node --version) já instalado (v20+)"
+else
   info "Instalando Node.js 20..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1
+  sudo apt-get install -y ca-certificates curl gnupg > /dev/null 2>&1
+  sudo mkdir -p /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+    | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+  sudo apt-get update -qq > /dev/null 2>&1
   sudo apt-get install -y nodejs > /dev/null 2>&1
   ok "Node.js $(node --version) instalado"
-else
-  ok "Node.js $(node --version) já instalado"
 fi
 
+# --- npm ---
+ok "npm $(npm --version) disponível"
+
 # --- PM2 ---
-if ! command -v pm2 &> /dev/null; then
+if command -v pm2 &>/dev/null; then
+  ok "PM2 $(pm2 --version) já instalado"
+else
   info "Instalando PM2..."
   sudo npm install -g pm2 > /dev/null 2>&1
-  ok "PM2 instalado"
+  ok "PM2 $(pm2 --version) instalado"
+fi
+
+# --- Git ---
+if command -v git &>/dev/null; then
+  ok "Git $(git --version | cut -d' ' -f3) já instalado"
 else
-  ok "PM2 $(pm2 --version) já instalado"
+  info "Instalando Git..."
+  sudo apt-get install -y git > /dev/null 2>&1
+  ok "Git instalado"
 fi
 
 # --- Nginx ---
-if [ -n "$DOMAIN" ] && ! command -v nginx &> /dev/null; then
+if command -v nginx &>/dev/null; then
+  ok "Nginx já instalado"
+elif [ -n "$DOMAIN" ]; then
   info "Instalando Nginx..."
   sudo apt-get install -y nginx > /dev/null 2>&1
-  ok "Nginx instalado"
+  sudo systemctl enable nginx > /dev/null 2>&1
+  sudo systemctl start nginx > /dev/null 2>&1
+  ok "Nginx instalado e iniciado"
 fi
 
-# --- Clonar/Atualizar repositório ---
+# --- Certbot (SSL) ---
+if [ "$CONFIGURE_SSL" = "s" ]; then
+  if command -v certbot &>/dev/null; then
+    ok "Certbot já instalado"
+  else
+    info "Instalando Certbot..."
+    sudo apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
+    ok "Certbot instalado"
+  fi
+fi
+
+# ============================================================
+#  PASSO 5 — INSTALAÇÃO DA APLICAÇÃO
+# ============================================================
+step "PASSO 5/5 — INSTALANDO RANDOLI SOLAR CRM"
+
+# --- Clonar ou Atualizar ---
 if [ -d "$INSTALL_DIR/.git" ]; then
-  info "Atualizando código existente..."
+  info "Diretório já existe — atualizando código..."
   cd "$INSTALL_DIR"
-  git pull origin main > /dev/null 2>&1 && ok "Código atualizado" || warn "Falha ao atualizar — usando versão atual"
+  if git pull origin main > /dev/null 2>&1; then
+    ok "Código atualizado do repositório"
+  else
+    warn "Falha ao atualizar. Continuando com versão atual."
+  fi
 else
   info "Clonando repositório..."
-  sudo mkdir -p "$INSTALL_DIR"
-  sudo chown "$USER:$USER" "$INSTALL_DIR"
+  sudo mkdir -p "$(dirname "$INSTALL_DIR")"
+  sudo chown -R "$USER:$USER" "$(dirname "$INSTALL_DIR")" 2>/dev/null || true
+
   if git clone "$REPO_URL" "$INSTALL_DIR" > /dev/null 2>&1; then
-    ok "Repositório clonado"
+    ok "Repositório clonado em $INSTALL_DIR"
   else
-    error "Falha ao clonar. Para repositório privado use:"
-    echo "  git clone https://SEU_TOKEN@github.com/icarorandoli/randoli-solar-crm.git $INSTALL_DIR" >&2
+    fail "Falha ao clonar o repositório."
+    echo ""
+    echo "  Verifique se:"
+    echo "  1. A URL está correta: $REPO_URL"
+    echo "  2. O repositório é público OU você informou o token correto"
+    echo "  3. Há conexão com a internet"
+    echo ""
+    echo "  Para clonar manualmente:"
+    echo "  git clone SUA_URL $INSTALL_DIR"
     exit 1
   fi
 fi
@@ -276,99 +392,197 @@ fi
 cd "$INSTALL_DIR"
 
 # --- Arquivo .env ---
-info "Criando arquivo de configuração..."
-cat > .env <<EOF
-# Randoli Solar CRM — gerado em $(date '+%d/%m/%Y %H:%M')
+info "Criando arquivo de configuração (.env)..."
+cat > .env <<ENVEOF
+# Randoli Solar CRM — Configuração de Produção
+# Gerado em: $(date '+%d/%m/%Y às %H:%M')
+# NÃO compartilhe este arquivo!
+
+# Porta do servidor (deve ser única na VPS)
 PORT=$PORT
+
+# Ambiente
 NODE_ENV=production
+
+# Chave secreta para sessões (não altere em produção sem reiniciar)
 SESSION_SECRET=$SESSION_SECRET
+
+# Domínio configurado
 APP_DOMAIN=${DOMAIN:-localhost}
-EOF
+ENVEOF
 ok ".env criado"
 
-# --- Dependências e build ---
-info "Instalando dependências (1–2 min)..."
-npm install --production=false > /dev/null 2>&1
-ok "Dependências instaladas"
+# --- npm install ---
+info "Instalando dependências npm (pode levar 2-3 minutos)..."
+if npm install --production=false > /tmp/npm-install-${APP_NAME}.log 2>&1; then
+  ok "Dependências instaladas"
+else
+  fail "Erro ao instalar dependências. Log: /tmp/npm-install-${APP_NAME}.log"
+  tail -20 "/tmp/npm-install-${APP_NAME}.log"
+  exit 1
+fi
 
-info "Compilando aplicação..."
-npm run build > /dev/null 2>&1
-ok "Build concluído"
+# --- Build de produção ---
+info "Compilando aplicação para produção..."
+if npm run build > /tmp/build-${APP_NAME}.log 2>&1; then
+  ok "Build concluído com sucesso"
+else
+  fail "Erro no build. Log: /tmp/build-${APP_NAME}.log"
+  tail -20 "/tmp/build-${APP_NAME}.log"
+  exit 1
+fi
 
-# --- PM2 ---
-info "Iniciando com PM2..."
-pm2 delete "$APP_NAME" > /dev/null 2>&1 || true
-pm2 start npm --name "$APP_NAME" -- start > /dev/null 2>&1
+# Verificar se o build gerou os arquivos esperados
+if [ ! -f "$INSTALL_DIR/dist/index.cjs" ]; then
+  fail "Arquivo dist/index.cjs não encontrado após o build."
+  exit 1
+fi
+ok "Binário de produção: dist/index.cjs ✔"
+
+# --- PM2: iniciar nova instância sem parar as existentes ---
+info "Configurando PM2..."
+if pm2 describe "$APP_NAME" > /dev/null 2>&1; then
+  # App já existe no PM2 — reiniciar
+  pm2 restart "$APP_NAME" > /dev/null 2>&1
+  ok "App PM2 '$APP_NAME' reiniciado"
+else
+  # Nova instância — não para nenhum app existente
+  pm2 start node \
+    --name "$APP_NAME" \
+    --cwd "$INSTALL_DIR" \
+    -- dist/index.cjs > /dev/null 2>&1
+  ok "App PM2 '$APP_NAME' iniciado (porta $PORT)"
+fi
 pm2 save > /dev/null 2>&1
-PM2_CMD=$(pm2 startup 2>&1 | grep "sudo env" | head -1)
-[ -n "$PM2_CMD" ] && eval "$PM2_CMD" > /dev/null 2>&1 || true
-ok "Aplicação rodando com PM2"
 
-# --- Nginx + SSL ---
-if [ -n "$DOMAIN" ] && command -v nginx &> /dev/null; then
+# Configurar PM2 para iniciar com o sistema (apenas se não estiver configurado)
+PM2_STARTUP=$(pm2 startup 2>&1 | grep "^sudo" | head -1)
+if [ -n "$PM2_STARTUP" ]; then
+  eval "$PM2_STARTUP" > /dev/null 2>&1 && ok "PM2 configurado para auto-start" || true
+else
+  ok "PM2 auto-start já configurado"
+fi
+
+# Aguardar app subir
+sleep 3
+if pm2 describe "$APP_NAME" 2>/dev/null | grep -q "online"; then
+  ok "App rodando: http://localhost:$PORT"
+else
+  warn "App pode não ter subido. Verifique: pm2 logs $APP_NAME"
+fi
+
+# --- Nginx ---
+if [ -n "$DOMAIN" ] && command -v nginx &>/dev/null; then
   info "Configurando Nginx para $DOMAIN..."
   NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
 
   sudo tee "$NGINX_CONF" > /dev/null <<NGINXEOF
+# Randoli Solar CRM — $DOMAIN
+# Gerado em: $(date '+%d/%m/%Y')
 server {
     listen 80;
+    listen [::]:80;
     server_name $DOMAIN;
+
     client_max_body_size 50M;
+    keepalive_timeout 65;
+
+    # Logs específicos desta aplicação
+    access_log /var/log/nginx/${APP_NAME}-access.log;
+    error_log  /var/log/nginx/${APP_NAME}-error.log;
 
     location / {
-        proxy_pass http://localhost:$PORT;
+        proxy_pass         http://127.0.0.1:$PORT;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header   Upgrade          \$http_upgrade;
+        proxy_set_header   Connection       'upgrade';
+        proxy_set_header   Host             \$host;
+        proxy_set_header   X-Real-IP        \$remote_addr;
+        proxy_set_header   X-Forwarded-For  \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
-        proxy_read_timeout 86400;
+        proxy_read_timeout 86400s;
+        proxy_buffering    off;
     }
 }
 NGINXEOF
 
+  # Ativar site (sem afetar outros sites)
   sudo ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/$APP_NAME"
 
   if sudo nginx -t > /dev/null 2>&1; then
     sudo systemctl reload nginx
     ok "Nginx configurado para $DOMAIN"
 
+    # --- SSL ---
     if [ "$CONFIGURE_SSL" = "s" ]; then
-      info "Configurando SSL (Let's Encrypt)..."
-      command -v certbot &> /dev/null || sudo apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
-      if sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$SSL_EMAIL" > /dev/null 2>&1; then
-        ok "HTTPS ativo em https://$DOMAIN"
+      info "Obtendo certificado SSL para $DOMAIN..."
+      if sudo certbot --nginx -d "$DOMAIN" \
+          --non-interactive --agree-tos -m "$SSL_EMAIL" \
+          --redirect > /tmp/certbot-${APP_NAME}.log 2>&1; then
+        ok "HTTPS ativo! Certificado SSL instalado."
       else
-        warn "SSL falhou — o DNS do domínio precisa apontar para este servidor."
+        warn "Certbot falhou. Causas possíveis:"
+        warn "  1. O DNS do domínio ainda não aponta para este servidor"
+        warn "  2. Firewall bloqueando porta 80"
         warn "Execute depois: sudo certbot --nginx -d $DOMAIN"
       fi
     fi
   else
-    warn "Erro no Nginx. Verifique: sudo nginx -t"
+    warn "Configuração do Nginx tem erros. Verifique: sudo nginx -t"
+    sudo nginx -t 2>&1 | grep -i error || true
   fi
 fi
 
-# ================================================================
+# Firewall: liberar porta (se ufw estiver ativo)
+if command -v ufw &>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+  if [ -n "$DOMAIN" ]; then
+    sudo ufw allow 'Nginx Full' > /dev/null 2>&1 && ok "Firewall: Nginx Full liberado" || true
+  else
+    sudo ufw allow "$PORT/tcp" > /dev/null 2>&1 && ok "Firewall: porta $PORT liberada" || true
+  fi
+fi
+
+# ============================================================
 #  RESULTADO FINAL
-# ================================================================
-br
-sep
-echo -e "${BOLD}${GREEN}  ✅  INSTALAÇÃO CONCLUÍDA!${NC}" >&2
-sep
-br
-[ -n "$DOMAIN" ] && [ "$CONFIGURE_SSL" = "s" ] && echo -e "  ${BOLD}Acesse:${NC}  ${GREEN}https://$DOMAIN${NC}" >&2
-[ -n "$DOMAIN" ] && [ "$CONFIGURE_SSL" != "s" ] && echo -e "  ${BOLD}Acesse:${NC}  ${CYAN}http://$DOMAIN${NC}" >&2
-echo -e "  ${BOLD}Local:${NC}   http://localhost:$PORT" >&2
-br
-echo -e "  ${BOLD}Gerenciar:${NC}" >&2
-echo -e "    pm2 status              → status" >&2
-echo -e "    pm2 logs $APP_NAME      → logs" >&2
-echo -e "    pm2 restart $APP_NAME   → reiniciar" >&2
-echo -e "    pm2 stop $APP_NAME      → parar" >&2
-br
-echo -e "  ${BOLD}Configuração:${NC} $INSTALL_DIR/.env" >&2
-br
-sep
+# ============================================================
+echo ""
+line
+echo -e "${G}${B}"
+echo "   ╔══════════════════════════════════════════════════╗"
+echo "   ║   ✅  INSTALAÇÃO CONCLUÍDA COM SUCESSO!          ║"
+echo "   ╚══════════════════════════════════════════════════╝"
+echo -e "${N}"
+echo ""
+
+if [ -n "$DOMAIN" ] && [ "$CONFIGURE_SSL" = "s" ]; then
+  echo -e "  ${B}Acesse o sistema:${N}  ${G}https://$DOMAIN${N}"
+elif [ -n "$DOMAIN" ]; then
+  echo -e "  ${B}Acesse o sistema:${N}  ${C}http://$DOMAIN${N}"
+fi
+
+# Obter IP público
+PUB_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "SEU_IP")
+echo -e "  ${B}Acesso direto:${N}    http://${PUB_IP}:${PORT}"
+echo ""
+echo -e "  ${B}Aplicação:${N}  $APP_NAME   |   ${B}Porta:${N} $PORT"
+echo -e "  ${B}Diretório:${N}  $INSTALL_DIR"
+echo -e "  ${B}Config:${N}     $INSTALL_DIR/.env"
+echo ""
+line
+echo ""
+echo -e "  ${B}Gerenciar a aplicação:${N}"
+echo -e "    pm2 status                    → ver todos os apps"
+echo -e "    pm2 logs $APP_NAME            → logs em tempo real"
+echo -e "    pm2 restart $APP_NAME         → reiniciar"
+echo -e "    pm2 stop $APP_NAME            → parar"
+echo -e "    pm2 delete $APP_NAME          → remover do PM2"
+echo ""
+echo -e "  ${B}Atualizar sistema (nova versão):${N}"
+echo -e "    cd $INSTALL_DIR"
+echo -e "    git pull origin main"
+echo -e "    npm install && npm run build"
+echo -e "    pm2 restart $APP_NAME"
+echo ""
+line
+echo ""
