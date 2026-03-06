@@ -56,6 +56,18 @@ All prefixed with `/api/`:
 - `/propostas` - CRUD
 - `/stats` - Dashboard statistics
 
+## Authentication System
+
+Full session-based auth via Passport.js LocalStrategy + scrypt password hashing:
+- **Login page**: `/login` — branded pt-BR login form
+- **Session guard**: `ProtectedApp` in App.tsx redirects unauthenticated users to `/login`
+- **Header**: Shows user initials avatar + name + logout button
+- **Routes**: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/change-password`
+- **User CRUD**: `GET/POST /api/users`, `PATCH /api/users/:id`, `DELETE /api/users/:id`
+- **Global guard**: All `/api/*` routes except `/api/auth/*` require authentication
+- **Default admin**: username `icaro`, password `Randoli@2024`, nome `ÍCARO RANDOLI`, cargo `Gerente`
+- **Conta page sections**: Dados da Empresa, Usuários do Sistema, Alterar Senha, Financeiro, Configurações, Suporte, Tickets, Sair
+
 ## Seed Data
 
 Pre-populated with realistic Brazilian solar company data:
@@ -66,3 +78,4 @@ Pre-populated with realistic Brazilian solar company data:
 - 5 contract templates
 - 3 projects, 2 constructions, 2 post-sale activities
 - 2 agenda items, 10 proposals
+- 1 admin user (icaro/Randoli@2024)
