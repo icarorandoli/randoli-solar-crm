@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID, scryptSync, randomBytes, timingSafeEqual } from "crypto";
 import type {
   User, InsertUser,
   Cliente, InsertCliente,
@@ -17,6 +17,9 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  listUsers(): Promise<User[]>;
+  updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
+  deleteUser(id: string): Promise<void>;
 
   getClientes(): Promise<Cliente[]>;
   getCliente(id: string): Promise<Cliente | undefined>;
@@ -79,6 +82,21 @@ export interface IStorage {
   deleteProposta(id: string): Promise<void>;
 }
 
+export function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, 64).toString("hex");
+  return `${hash}.${salt}`;
+}
+
+export function verifyPassword(password: string, stored: string): boolean {
+  try {
+    const [hash, salt] = stored.split(".");
+    const hashBuffer = Buffer.from(hash, "hex");
+    const supplied = scryptSync(password, salt, 64);
+    return timingSafeEqual(hashBuffer, supplied);
+  } catch { return false; }
+}
+
 function now() {
   return new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }) + " | " +
     new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -97,7 +115,21 @@ export class MemStorage implements IStorage {
   private agendaMap = new Map<string, AgendaItem>();
   private propostasMap = new Map<string, Proposta>();
 
-  constructor() { this.seed(); }
+  constructor() {
+    this.seed();
+    this.seedUsers();
+  }
+
+  private seedUsers() {
+    const admin: User = {
+      id: "user-admin-1",
+      username: "icaro",
+      password: hashPassword("Randoli@2024"),
+      nome: "ÍCARO RANDOLI",
+      cargo: "Gerente",
+    };
+    this.users.set(admin.id, admin);
+  }
 
   private seed() {
     const clienteIds = [
@@ -207,7 +239,10 @@ export class MemStorage implements IStorage {
 
   async getUser(id: string) { return this.users.get(id); }
   async getUserByUsername(username: string) { return Array.from(this.users.values()).find(u => u.username === username); }
-  async createUser(u: InsertUser) { const user: User = { ...u, id: randomUUID() }; this.users.set(user.id, user); return user; }
+  async createUser(u: InsertUser) { const user: User = { nome: "", cargo: "Colaborador", ...u, id: randomUUID() }; this.users.set(user.id, user); return user; }
+  async listUsers() { return Array.from(this.users.values()); }
+  async updateUser(id: string, data: Partial<InsertUser>) { const u = this.users.get(id); if (!u) return undefined; const updated = { ...u, ...data }; this.users.set(id, updated); return updated; }
+  async deleteUser(id: string) { this.users.delete(id); }
 
   async getClientes() { return Array.from(this.clientesMap.values()); }
   async getCliente(id: string) { return this.clientesMap.get(id); }

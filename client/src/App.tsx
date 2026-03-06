@@ -1,6 +1,6 @@
-import { Switch, Route } from "wouter";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { Switch, Route, Redirect } from "wouter";
+import { queryClient, apiRequest } from "./lib/queryClient";
+import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
@@ -20,9 +20,24 @@ import ProjetosPage from "@/pages/projetos";
 import ObrasPage from "@/pages/obras";
 import PosVendaPage from "@/pages/pos-venda";
 import AgendaPage from "@/pages/agenda";
-import { Bell } from "lucide-react";
+import LoginPage from "@/pages/login";
+import { Bell, LogOut } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
+
+interface AuthUser { id: string; username: string; nome: string; cargo: string; }
+
+function useAuth() {
+  return useQuery<AuthUser>({
+    queryKey: ["/api/auth/me"],
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+function getInitials(nome: string) {
+  return nome.split(" ").filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?";
+}
 
 function Router() {
   return (
@@ -47,13 +62,19 @@ function Router() {
   );
 }
 
-const style = {
-  "--sidebar-width": "15rem",
-  "--sidebar-width-icon": "3rem",
-};
+const style = { "--sidebar-width": "15rem", "--sidebar-width-icon": "3rem" };
 
-function AppHeader() {
+function AppHeader({ user }: { user: AuthUser }) {
   const [location, navigate] = useLocation();
+  const logoutMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/auth/logout"),
+    onSuccess: () => {
+      queryClient.setQueryData(["/api/auth/me"], null);
+      queryClient.clear();
+      navigate("/login");
+    },
+  });
+
   return (
     <header className="flex items-center justify-between px-4 py-2 bg-white dark:bg-card border-b border-border h-12 shrink-0">
       <div className="flex items-center gap-3">
@@ -70,19 +91,61 @@ function AppHeader() {
         </nav>
       </div>
       <div className="flex items-center gap-2">
-        <Button size="icon" variant="ghost" data-testid="button-notifications" className="text-muted-foreground" onClick={() => {}}>
+        <Button size="icon" variant="ghost" data-testid="button-notifications" className="text-muted-foreground">
           <Bell className="w-5 h-5" />
         </Button>
         <div
           data-testid="avatar-user"
           onClick={() => navigate("/conta")}
-          className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white font-semibold text-sm cursor-pointer hover:bg-primary/90 transition-colors"
-          title="Minha Conta"
+          className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white font-semibold text-xs cursor-pointer hover:bg-primary/90 transition-colors"
+          title={user.nome}
         >
-          IR
+          {getInitials(user.nome)}
         </div>
+        <Button
+          size="icon"
+          variant="ghost"
+          data-testid="button-logout"
+          title="Sair"
+          className="text-muted-foreground"
+          onClick={() => logoutMutation.mutate()}
+          disabled={logoutMutation.isPending}
+        >
+          <LogOut className="w-4 h-4" />
+        </Button>
       </div>
     </header>
+  );
+}
+
+function ProtectedApp() {
+  const { data: user, isLoading } = useAuth();
+  const [, navigate] = useLocation();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-muted-foreground text-sm animate-pulse">Carregando...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Redirect to="/login" />;
+  }
+
+  return (
+    <SidebarProvider style={style as React.CSSProperties}>
+      <div className="flex h-screen w-full overflow-hidden">
+        <AppSidebar />
+        <div className="flex flex-col flex-1 min-w-0">
+          <AppHeader user={user} />
+          <main className="flex-1 overflow-auto bg-background">
+            <Router />
+          </main>
+        </div>
+      </div>
+    </SidebarProvider>
   );
 }
 
@@ -90,17 +153,12 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <SidebarProvider style={style as React.CSSProperties}>
-          <div className="flex h-screen w-full overflow-hidden">
-            <AppSidebar />
-            <div className="flex flex-col flex-1 min-w-0">
-              <AppHeader />
-              <main className="flex-1 overflow-auto bg-background">
-                <Router />
-              </main>
-            </div>
-          </div>
-        </SidebarProvider>
+        <Switch>
+          <Route path="/login" component={LoginPage} />
+          <Route>
+            <ProtectedApp />
+          </Route>
+        </Switch>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

@@ -1,11 +1,28 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, hashPassword, verifyPassword } from "./storage";
 import multer from "multer";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import { insertClienteSchema, insertVendaSchema, insertKitSchema, insertColaboradorSchema, insertContratoSchema, insertProjetoSchema, insertObraSchema, insertAtividadeSchema, insertAgendaItemSchema, insertPropostaSchema } from "@shared/schema";
 import type { Venda } from "@shared/schema";
+import session from "express-session";
+import MemoryStore from "memorystore";
+import passport from "passport";
+import { Strategy as LocalStrategy } from "passport-local";
+
+const MemStore = MemoryStore(session);
+
+declare global {
+  namespace Express {
+    interface User { id: string; username: string; nome: string; cargo: string; }
+  }
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (req.isAuthenticated()) return next();
+  res.status(401).json({ message: "Não autenticado" });
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -141,6 +158,110 @@ function buildTagData(venda: Venda): Record<string, any> {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // ── Sessão ──────────────────────────────────────────────
+  app.use(session({
+    secret: process.env.SESSION_SECRET || "randoli-crm-dev-secret",
+    resave: false,
+    saveUninitialized: false,
+    store: new MemStore({ checkPeriod: 86400000 }),
+    cookie: { maxAge: 8 * 60 * 60 * 1000, httpOnly: true, sameSite: "lax" },
+  }));
+
+  // ── Passport ─────────────────────────────────────────────
+  passport.use(new LocalStrategy(async (username, password, done) => {
+    try {
+      const user = await storage.getUserByUsername(username.toLowerCase().trim());
+      if (!user) return done(null, false, { message: "Usuário não encontrado" });
+      if (!verifyPassword(password, user.password)) return done(null, false, { message: "Senha incorreta" });
+      return done(null, { id: user.id, username: user.username, nome: user.nome, cargo: user.cargo });
+    } catch (e) { return done(e); }
+  }));
+  passport.serializeUser((user, done) => done(null, user.id));
+  passport.deserializeUser(async (id: string, done) => {
+    try {
+      const user = await storage.getUser(id);
+      if (!user) return done(null, false);
+      done(null, { id: user.id, username: user.username, nome: user.nome, cargo: user.cargo });
+    } catch (e) { done(e); }
+  });
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  // ── Rotas de autenticação (públicas) ─────────────────────
+  app.post("/api/auth/login", (req, res, next) => {
+    passport.authenticate("local", (err: any, user: Express.User | false, info: any) => {
+      if (err) return next(err);
+      if (!user) return res.status(401).json({ message: info?.message || "Credenciais inválidas" });
+      req.logIn(user, (loginErr) => {
+        if (loginErr) return next(loginErr);
+        res.json({ id: user.id, username: user.username, nome: user.nome, cargo: user.cargo });
+      });
+    })(req, res, next);
+  });
+
+  app.post("/api/auth/logout", (req, res, next) => {
+    req.logout((err) => {
+      if (err) return next(err);
+      res.json({ success: true });
+    });
+  });
+
+  app.get("/api/auth/me", (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Não autenticado" });
+    const u = req.user!;
+    res.json({ id: u.id, username: u.username, nome: u.nome, cargo: u.cargo });
+  });
+
+  app.post("/api/auth/change-password", requireAuth, async (req, res) => {
+    const { senhaAtual, novaSenha } = req.body;
+    if (!senhaAtual || !novaSenha) return res.status(400).json({ message: "Campos obrigatórios" });
+    if (novaSenha.length < 6) return res.status(400).json({ message: "Senha mínima de 6 caracteres" });
+    const user = await storage.getUser(req.user!.id);
+    if (!user) return res.status(404).json({ message: "Usuário não encontrado" });
+    if (!verifyPassword(senhaAtual, user.password)) return res.status(401).json({ message: "Senha atual incorreta" });
+    await storage.updateUser(user.id, { password: hashPassword(novaSenha) });
+    res.json({ success: true });
+  });
+
+  // ── Gestão de usuários/colaboradores (admin) ─────────────
+  app.get("/api/users", requireAuth, async (_req, res) => {
+    const users = await storage.listUsers();
+    res.json(users.map(u => ({ id: u.id, username: u.username, nome: u.nome, cargo: u.cargo })));
+  });
+
+  app.post("/api/users", requireAuth, async (req, res) => {
+    const { username, password, nome, cargo } = req.body;
+    if (!username || !password || !nome) return res.status(400).json({ message: "username, password e nome são obrigatórios" });
+    const existing = await storage.getUserByUsername(username.toLowerCase().trim());
+    if (existing) return res.status(409).json({ message: "Username já em uso" });
+    const user = await storage.createUser({
+      username: username.toLowerCase().trim(),
+      password: hashPassword(password),
+      nome: nome.toUpperCase(),
+      cargo: cargo || "Colaborador",
+    });
+    res.json({ id: user.id, username: user.username, nome: user.nome, cargo: user.cargo });
+  });
+
+  app.patch("/api/users/:id", requireAuth, async (req, res) => {
+    const { nome, cargo, username } = req.body;
+    const updated = await storage.updateUser(req.params.id, { ...(nome && { nome: nome.toUpperCase() }), ...(cargo && { cargo }), ...(username && { username: username.toLowerCase().trim() }) });
+    updated ? res.json({ id: updated.id, username: updated.username, nome: updated.nome, cargo: updated.cargo }) : res.status(404).json({ message: "Not found" });
+  });
+
+  app.delete("/api/users/:id", requireAuth, async (req, res) => {
+    if (req.params.id === req.user!.id) return res.status(400).json({ message: "Não é possível excluir sua própria conta" });
+    await storage.deleteUser(req.params.id);
+    res.json({ success: true });
+  });
+
+  // ── Proteção global: todas as rotas /api/* (exceto /api/auth/*) ──
+  app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/auth/")) return next();
+    if (req.isAuthenticated()) return next();
+    res.status(401).json({ message: "Não autenticado" });
+  });
+
   app.get("/api/clientes", async (_req, res) => res.json(await storage.getClientes()));
   app.get("/api/clientes/:id", async (req, res) => { const c = await storage.getCliente(req.params.id); c ? res.json(c) : res.status(404).json({ message: "Not found" }); });
   app.post("/api/clientes", async (req, res) => { const r = insertClienteSchema.safeParse(req.body); if (!r.success) return res.status(400).json({ message: r.error.message }); res.json(await storage.createCliente(r.data)); });

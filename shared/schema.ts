@@ -6,6 +6,8 @@ export const users = pgTable("users", {
   id: varchar("id").primaryKey(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  nome: text("nome").notNull().default(""),
+  cargo: text("cargo").notNull().default("Colaborador"),
 });
 
 export const clientes = pgTable("clientes", {
@@ -181,7 +183,7 @@ export const propostas = pgTable("propostas", {
   createdAt: text("created_at").notNull(),
 });
 
-export const insertUserSchema = createInsertSchema(users).pick({ username: true, password: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertClienteSchema = createInsertSchema(clientes).omit({ id: true, createdAt: true });
 export const insertVendaSchema = createInsertSchema(vendas).omit({ id: true, createdAt: true });
 export const insertKitSchema = createInsertSchema(kits).omit({ id: true, createdAt: true });
