@@ -85,14 +85,14 @@ export default function PropostaView() {
   const contratoSelecionado = contratos?.find(c => c.id === selectedContratoId);
 
   const handleGerarContrato = async () => {
-    if (!selectedContratoId || !proposta.vendaId) return;
+    if (!selectedContratoId) return;
     if (!(contratoSelecionado as any)?.templateData) {
       toast({ title: "Modelo sem arquivo Word", description: "Acesse Contratos e faça o upload do .docx para este modelo.", variant: "destructive" });
       return;
     }
     setGerandoContrato(true);
     try {
-      const res = await fetch(`/api/contratos/${selectedContratoId}/gerar/${proposta.vendaId}`, { method: "POST" });
+      const res = await fetch(`/api/contratos/${selectedContratoId}/gerar-proposta/${id}`, { method: "POST" });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.message);
@@ -340,13 +340,7 @@ export default function PropostaView() {
             </DialogTitle>
           </DialogHeader>
 
-          {!proposta.vendaId ? (
-            <div className="flex items-start gap-2 text-sm text-orange-600 bg-orange-50 border border-orange-200 rounded-lg p-3">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <p>Esta proposta não está vinculada a uma venda no funil. Acesse o Funil de Vendas e gere o contrato a partir do card do cliente.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
+          <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 Selecione um modelo de contrato Word (.docx). O sistema preencherá automaticamente os dados do cliente e da proposta.
               </p>
@@ -403,7 +397,6 @@ export default function PropostaView() {
                 </Button>
               </div>
             </div>
-          )}
         </DialogContent>
       </Dialog>
     </>
