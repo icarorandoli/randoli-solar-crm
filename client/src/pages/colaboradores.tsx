@@ -98,6 +98,8 @@ export default function ColaboradoresPage() {
   const getColabUser = (c: Colaborador) =>
     (users ?? []).find(u => u.nome.toLowerCase() === c.nome.toLowerCase());
 
+  const acessoColabUser = acessoColaborador ? getColabUser(acessoColaborador) : null;
+
   const onSubmit = (data: InsertColaborador) => {
     if (editColaborador) updateMutation.mutate({ id: editColaborador.id, data });
     else createMutation.mutate(data);
@@ -247,105 +249,100 @@ export default function ColaboradoresPage() {
             </DialogTitle>
           </DialogHeader>
 
-          {acessoColaborador && (() => {
-            const colabUser = getColabUser(acessoColaborador);
-            return (
-              <div className="space-y-4">
-                {colabUser ? (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
-                    <div className="flex items-center gap-2 text-green-700 font-medium text-sm">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Acesso ativo
-                    </div>
-                    <p className="text-sm text-foreground">Usuário: <strong>@{colabUser.username}</strong></p>
-                    <p className="text-sm text-foreground">Cargo: {colabUser.cargo}</p>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="w-full mt-2"
-                      onClick={() => deleteUserMutation.mutate(colabUser.id)}
-                      disabled={deleteUserMutation.isPending}
-                      data-testid="button-remover-acesso"
-                    >
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      {deleteUserMutation.isPending ? "Removendo..." : "Remover Acesso"}
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-sm text-muted-foreground">
-                      Crie um login para <strong>{acessoColaborador.nome}</strong> acessar o sistema.
-                    </p>
-
-                    <div>
-                      <label className="text-sm font-medium block mb-1">Nome de usuário</label>
-                      <Input
-                        placeholder="ex: joao.silva"
-                        value={novoUsername}
-                        onChange={e => setNovoUsername(e.target.value.toLowerCase().replace(/\s+/g, "."))}
-                        data-testid="input-username-acesso"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium block mb-1">Senha</label>
-                      <div className="relative">
-                        <Input
-                          type={showSenha ? "text" : "password"}
-                          placeholder="Mínimo 6 caracteres"
-                          value={novaSenha}
-                          onChange={e => setNovaSenha(e.target.value)}
-                          data-testid="input-senha-acesso"
-                          className="pr-9"
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
-                          onClick={() => setShowSenha(!showSenha)}
-                        >
-                          {showSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-medium block mb-1">Confirmar senha</label>
-                      <div className="relative">
-                        <Input
-                          type={showSenha2 ? "text" : "password"}
-                          placeholder="Repita a senha"
-                          value={novaSenha2}
-                          onChange={e => setNovaSenha2(e.target.value)}
-                          data-testid="input-senha2-acesso"
-                          className="pr-9"
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
-                          onClick={() => setShowSenha2(!showSenha2)}
-                        >
-                          {showSenha2 ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 pt-1">
-                      <Button variant="outline" className="flex-1" onClick={() => setAcessoColaborador(null)}>Cancelar</Button>
-                      <Button
-                        className="flex-1"
-                        onClick={handleCriarAcesso}
-                        disabled={createUserMutation.isPending}
-                        data-testid="button-criar-acesso"
-                      >
-                        <Shield className="w-4 h-4 mr-1" />
-                        {createUserMutation.isPending ? "Criando..." : "Criar Acesso"}
-                      </Button>
-                    </div>
-                  </div>
-                )}
+          <div className="space-y-4">
+            {acessoColabUser ? (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2 text-green-700 font-medium text-sm">
+                  <CheckCircle2 className="w-4 h-4" />
+                  Acesso ativo
+                </div>
+                <p className="text-sm text-foreground">Usuário: <strong>@{acessoColabUser.username}</strong></p>
+                <p className="text-sm text-foreground">Cargo: {acessoColabUser.cargo}</p>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="w-full mt-2"
+                  onClick={() => deleteUserMutation.mutate(acessoColabUser.id)}
+                  disabled={deleteUserMutation.isPending}
+                  data-testid="button-remover-acesso"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  {deleteUserMutation.isPending ? "Removendo..." : "Remover Acesso"}
+                </Button>
               </div>
-            );
-          })()}
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Crie um login para <strong>{acessoColaborador?.nome}</strong> acessar o sistema.
+                </p>
+
+                <div>
+                  <label className="text-sm font-medium block mb-1">Nome de usuário</label>
+                  <Input
+                    placeholder="ex: joao.silva"
+                    value={novoUsername}
+                    onChange={e => setNovoUsername(e.target.value.toLowerCase().replace(/\s+/g, "."))}
+                    data-testid="input-username-acesso"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium block mb-1">Senha</label>
+                  <div className="relative">
+                    <Input
+                      type={showSenha ? "text" : "password"}
+                      placeholder="Mínimo 6 caracteres"
+                      value={novaSenha}
+                      onChange={e => setNovaSenha(e.target.value)}
+                      data-testid="input-senha-acesso"
+                      className="pr-9"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      onClick={() => setShowSenha(!showSenha)}
+                    >
+                      {showSenha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium block mb-1">Confirmar senha</label>
+                  <div className="relative">
+                    <Input
+                      type={showSenha2 ? "text" : "password"}
+                      placeholder="Repita a senha"
+                      value={novaSenha2}
+                      onChange={e => setNovaSenha2(e.target.value)}
+                      data-testid="input-senha2-acesso"
+                      className="pr-9"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      onClick={() => setShowSenha2(!showSenha2)}
+                    >
+                      {showSenha2 ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" className="flex-1" onClick={() => setAcessoColaborador(null)}>Cancelar</Button>
+                  <Button
+                    className="flex-1"
+                    onClick={handleCriarAcesso}
+                    disabled={createUserMutation.isPending}
+                    data-testid="button-criar-acesso"
+                  >
+                    <Shield className="w-4 h-4 mr-1" />
+                    {createUserMutation.isPending ? "Criando..." : "Criar Acesso"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
