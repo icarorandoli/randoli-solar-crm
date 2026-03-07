@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, ChevronLeft, Plus, Minus, ShoppingCart, FileEdit, Package, Zap, Sun } from "lucide-react";
-import type { Cliente, Venda, Kit } from "@shared/schema";
+import type { Cliente, Venda, Kit, Proposta } from "@shared/schema";
 
 const STEPS = [
   { label: "Cadastro UCs", id: 1 },
@@ -73,6 +73,10 @@ export default function NovaProposta() {
   const [step, setStep] = useState(1);
   const [kitView, setKitView] = useState<"options" | "list">("options");
 
+  const params = new URLSearchParams(searchStr);
+  const editId = params.get("edit") ?? null;
+  const isEditMode = !!editId;
+
   const [d, setD] = useState({
     clienteNome: "", email: "", uf: "MT", cidade: "", endereco: "", latitude: "", longitude: "", deslocamento: "",
     modalidadeTarifaria: "Grupo B (Baixa Tensão)", nomeUc: "", tipoUc: "Residencial",
@@ -100,9 +104,68 @@ export default function NovaProposta() {
 
   const { data: clientes } = useQuery<Cliente[]>({ queryKey: ["/api/clientes"] });
 
+  const { data: propostaParaEditar } = useQuery<Proposta>({
+    queryKey: ["/api/propostas", editId],
+    enabled: !!editId,
+  });
+
+  // Popula os campos quando carrega a proposta em modo edição
+  useEffect(() => {
+    if (!propostaParaEditar || !isEditMode) return;
+    const p = propostaParaEditar;
+    let custos: { nome: string; valor: string }[] = [];
+    try { custos = JSON.parse(p.custosServico || "[]"); } catch { custos = []; }
+    const c1 = custos[0] ?? { nome: "Projeto", valor: "0,00" };
+    const c2 = custos[1] ?? { nome: "Instalação", valor: "0,00" };
+    const c3 = custos[2] ?? { nome: "Material CA", valor: "0,00" };
+    const extras = custos.slice(3);
+    setD(prev => ({
+      ...prev,
+      clienteNome: p.clienteNome ?? prev.clienteNome,
+      email: p.email ?? prev.email,
+      uf: p.uf ?? prev.uf,
+      cidade: p.cidade ?? prev.cidade,
+      endereco: p.endereco ?? prev.endereco,
+      latitude: p.latitude ?? prev.latitude,
+      longitude: p.longitude ?? prev.longitude,
+      deslocamento: p.deslocamento ?? prev.deslocamento,
+      modalidadeTarifaria: p.modalidadeTarifaria ?? prev.modalidadeTarifaria,
+      nomeUc: p.nomeUc ?? prev.nomeUc,
+      tipoUc: p.tipoUc ?? prev.tipoUc,
+      concessionaria: p.concessionaria ?? prev.concessionaria,
+      valorKwh: p.valorKwh ?? prev.valorKwh,
+      taxaIlumPub: p.taxaIlumPub ?? prev.taxaIlumPub,
+      rede: p.rede ?? prev.rede,
+      consumoMensal: p.consumoMensal ?? prev.consumoMensal,
+      percGeracao: p.percGeracao ?? prev.percGeracao,
+      percPerdas: p.percPerdas ?? prev.percPerdas,
+      kitId: p.kitId ?? prev.kitId,
+      kitNome: p.kitNome ?? prev.kitNome,
+      potCalculada: p.potCalculada ?? prev.potCalculada,
+      valorKit: p.valorKit ?? prev.valorKit,
+      descontoKit: p.descontoKit ?? prev.descontoKit,
+      areaObra: p.areaObra ?? prev.areaObra,
+      vendaId: p.vendaId ?? prev.vendaId,
+      percImpostos: p.percImpostos ?? prev.percImpostos,
+      percMargem: p.percMargem ?? prev.percMargem,
+      receitaAdicional: p.receitaAdicional ?? prev.receitaAdicional,
+      inflacaoAnual: p.inflacaoAnual ?? prev.inflacaoAnual,
+      condicoesPagamento: p.condicoesPagamento ?? prev.condicoesPagamento,
+      descontoNegociacao: p.descontoNegociacao ?? prev.descontoNegociacao,
+      tema: p.tema ?? prev.tema,
+      validade: p.validade ?? prev.validade,
+      custoServico1Nome: c1.nome,
+      custoServico1Valor: c1.valor,
+      custoServico2Nome: c2.nome,
+      custoServico2Valor: c2.valor,
+      custoServico3Nome: c3.nome,
+      custoServico3Valor: c3.valor,
+      custosExtra: extras,
+    }));
+  }, [propostaParaEditar, isEditMode]);
+
   useEffect(() => {
     if (!clientes || !searchStr) return;
-    const params = new URLSearchParams(searchStr);
     const clienteId = params.get("clienteId");
     if (!clienteId) return;
     const c = clientes.find(x => x.id === clienteId);
@@ -204,9 +267,23 @@ export default function NovaProposta() {
     onError: () => toast({ title: "Erro ao gerar proposta", variant: "destructive" }),
   });
 
+  const updateMutation = useMutation({
+    mutationFn: (payload: Record<string, unknown>) => apiRequest("PATCH", `/api/propostas/${editId}`, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/propostas"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/propostas", editId] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/vendas"] }),
+      ]);
+      toast({ title: "Proposta atualizada com sucesso!" });
+      navigate(`/proposta/${editId}`);
+    },
+    onError: () => toast({ title: "Erro ao atualizar proposta", variant: "destructive" }),
+  });
+
   const gerarProposta = () => {
     const vf = valorFinal();
-    createMutation.mutate({
+    const payload = {
       clienteNome: d.clienteNome || "Cliente",
       valor: fmtBRL(vf),
       kwp: (parseFloat(d.potCalculada) || 0).toFixed(2),
@@ -251,7 +328,12 @@ export default function NovaProposta() {
       validade: d.validade || null,
       dataValidade: dataValidadeFmt(),
       tema: d.tema || null,
-    });
+    };
+    if (isEditMode) {
+      updateMutation.mutate(payload);
+      return;
+    }
+    createMutation.mutate(payload);
   };
 
   const selectKit = (kit: Kit) => {
@@ -280,10 +362,10 @@ export default function NovaProposta() {
   return (
     <div className="max-w-2xl mx-auto p-4 pb-16">
       <div className="flex items-center gap-3 mb-4">
-        <Button variant="ghost" size="sm" onClick={() => navigate("/propostas")} data-testid="button-voltar-propostas">
+        <Button variant="ghost" size="sm" onClick={() => isEditMode ? navigate(`/proposta/${editId}`) : navigate("/propostas")} data-testid="button-voltar-propostas">
           <ChevronLeft className="w-4 h-4 mr-1" /> Voltar
         </Button>
-        <h2 className="text-foreground font-semibold">Gerar Proposta</h2>
+        <h2 className="text-foreground font-semibold">{isEditMode ? "Editar Proposta" : "Gerar Proposta"}</h2>
       </div>
 
       <div className="bg-white dark:bg-card border border-border rounded-lg p-4">
@@ -876,9 +958,11 @@ export default function NovaProposta() {
                 data-testid="button-gerar-proposta-final"
                 className="w-full text-xs font-bold tracking-widest"
                 onClick={gerarProposta}
-                disabled={createMutation.isPending}
+                disabled={createMutation.isPending || updateMutation.isPending}
               >
-                {createMutation.isPending ? "GERANDO..." : "GERAR PROPOSTA"}
+                {(createMutation.isPending || updateMutation.isPending)
+                  ? (isEditMode ? "SALVANDO..." : "GERANDO...")
+                  : (isEditMode ? "SALVAR ALTERAÇÕES" : "GERAR PROPOSTA")}
               </Button>
               <Button variant="outline" onClick={() => setStep(5)} className="w-full text-xs font-bold tracking-widest border-red-400 text-red-500 hover:bg-red-50">
                 VOLTAR
