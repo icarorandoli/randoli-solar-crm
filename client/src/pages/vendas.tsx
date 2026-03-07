@@ -14,9 +14,10 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { insertVendaSchema, type Venda, type InsertVenda, type Contrato } from "@shared/schema";
 import { z } from "zod";
 import { Plus, Filter, MoreHorizontal, FileText, X, DollarSign, Download, Upload, CheckCircle2, AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useSearch } from "wouter";
 
 const FUNIL_COLUMNS = [
   { id: "objetivo do cliente", label: "objetivo do cliente" },
@@ -35,9 +36,19 @@ export default function VendasPage() {
   const [selectedContratoId, setSelectedContratoId] = useState<string>("");
   const [gerandoContrato, setGerandoContrato] = useState(false);
   const { toast } = useToast();
+  const searchStr = useSearch();
+
+  const highlightId = new URLSearchParams(searchStr).get("highlight");
 
   const { data: vendas, isLoading } = useQuery<Venda[]>({ queryKey: ["/api/vendas"] });
   const { data: contratos } = useQuery<Contrato[]>({ queryKey: ["/api/contratos"] });
+
+  useEffect(() => {
+    if (highlightId && vendas && !selectedVenda) {
+      const venda = vendas.find(v => v.id === highlightId);
+      if (venda) { setSelectedVenda(venda); setSelectedContratoId(""); }
+    }
+  }, [highlightId, vendas]);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -140,7 +151,10 @@ export default function VendasPage() {
                       <Card
                         key={v.id}
                         data-testid={`card-venda-${v.id}`}
-                        className="p-3 border border-card-border cursor-pointer hover:border-primary/40 transition-colors"
+                        className={cn(
+                          "p-3 border cursor-pointer hover:border-primary/40 transition-colors",
+                          highlightId === v.id ? "border-primary ring-2 ring-primary/30" : "border-card-border"
+                        )}
                         onClick={() => { setSelectedVenda(v); setSelectedContratoId(""); }}
                       >
                         <div className="flex items-start justify-between gap-2 mb-1">
