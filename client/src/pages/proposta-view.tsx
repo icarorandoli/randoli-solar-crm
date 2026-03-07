@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Printer, ArrowLeft, CheckCircle2, Sun, Zap, BarChart3, TrendingUp, FileText, KanbanSquare, Download, AlertCircle, FileSignature } from "lucide-react";
+import { Printer, ArrowLeft, CheckCircle2, Sun, Zap, BarChart3, TrendingUp, FileText, KanbanSquare, Download, AlertCircle, FileSignature, Pencil } from "lucide-react";
 import type { Proposta, Kit, Contrato } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import logoPath from "@/assets/randoli-solar-logo.png";
@@ -145,6 +145,15 @@ export default function PropostaView() {
                 <KanbanSquare className="w-4 h-4" /> Ver no Funil
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(`/propostas/nova?edit=${id}`)}
+              data-testid="button-editar-proposta"
+              className="gap-1"
+            >
+              <Pencil className="w-4 h-4" /> Editar
+            </Button>
             <Button
               size="sm"
               variant="outline"
