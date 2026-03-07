@@ -3,17 +3,24 @@ import { useRoute, useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Printer, ArrowLeft, CheckCircle2, Sun, Zap, BarChart3, TrendingUp, FileText, KanbanSquare } from "lucide-react";
-import type { Proposta, Kit } from "@shared/schema";
+import { Printer, ArrowLeft, CheckCircle2, Sun, Zap, BarChart3, TrendingUp, FileText, KanbanSquare, Download, AlertCircle, FileSignature } from "lucide-react";
+import type { Proposta, Kit, Contrato } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import logoPath from "@/assets/randoli-solar-logo.png";
+import { useState } from "react";
 
 export default function PropostaView() {
   const [, params] = useRoute("/proposta/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const id = params?.id;
+
+  const [showContratoDialog, setShowContratoDialog] = useState(false);
+  const [selectedContratoId, setSelectedContratoId] = useState("");
+  const [gerandoContrato, setGerandoContrato] = useState(false);
 
   const { data: proposta, isLoading } = useQuery<Proposta>({
     queryKey: ["/api/propostas", id],
@@ -23,6 +30,11 @@ export default function PropostaView() {
   const { data: kit } = useQuery<Kit>({
     queryKey: ["/api/kits", proposta?.kitId],
     enabled: !!proposta?.kitId,
+  });
+
+  const { data: contratos } = useQuery<Contrato[]>({
+    queryKey: ["/api/contratos"],
+    enabled: showContratoDialog,
   });
 
   const updateMutation = useMutation({
@@ -70,6 +82,41 @@ export default function PropostaView() {
     window.print();
   };
 
+  const contratoSelecionado = contratos?.find(c => c.id === selectedContratoId);
+
+  const handleGerarContrato = async () => {
+    if (!selectedContratoId || !proposta.vendaId) return;
+    if (!(contratoSelecionado as any)?.templateData) {
+      toast({ title: "Modelo sem arquivo Word", description: "Acesse Contratos e faça o upload do .docx para este modelo.", variant: "destructive" });
+      return;
+    }
+    setGerandoContrato(true);
+    try {
+      const res = await fetch(`/api/contratos/${selectedContratoId}/gerar/${proposta.vendaId}`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message);
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") ?? "";
+      const match = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';\r\n]+)/i);
+      const filename = match ? decodeURIComponent(match[1].replace(/^["']|["']$/g, "")) : `Contrato_${proposta.clienteNome}.docx`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Contrato gerado com sucesso!", description: `Arquivo: ${filename}` });
+      setShowContratoDialog(false);
+      setSelectedContratoId("");
+    } catch (err: any) {
+      toast({ title: "Erro ao gerar contrato", description: err.message, variant: "destructive" });
+    } finally {
+      setGerandoContrato(false);
+    }
+  };
+
   return (
     <>
       <style>{`
@@ -85,10 +132,27 @@ export default function PropostaView() {
           <Button variant="ghost" size="sm" onClick={() => navigate("/propostas")}>
             <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
           </Button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <span className="text-xs text-muted-foreground">{proposta.visualizacoes ?? 0} visualização(ões)</span>
-            <Button size="sm" variant="outline" onClick={() => navigate("/vendas")} data-testid="button-ver-funil" className="gap-1">
-              <KanbanSquare className="w-4 h-4" /> Ver no Funil
+            {proposta.vendaId && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate(`/vendas?highlight=${proposta.vendaId}`)}
+                data-testid="button-ver-funil"
+                className="gap-1"
+              >
+                <KanbanSquare className="w-4 h-4" /> Ver no Funil
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowContratoDialog(true)}
+              data-testid="button-gerar-contrato"
+              className="gap-1"
+            >
+              <FileSignature className="w-4 h-4" /> Gerar Contrato
             </Button>
             <Button size="sm" onClick={handlePrint} data-testid="button-imprimir-proposta">
               <Printer className="w-4 h-4 mr-1" /> Imprimir / PDF
@@ -237,9 +301,9 @@ export default function PropostaView() {
             <div className="p-4 rounded-lg mb-4 text-center" style={{ backgroundColor: `${cor}15`, borderTop: `3px solid ${cor}` }}>
               <div className="text-xs text-muted-foreground mb-1">INVESTIMENTO TOTAL</div>
               <div className="text-3xl font-bold" style={{ color: cor }}>R$ {proposta.totalFinal || proposta.valor}</div>
-              {kwp > 0 && proposta.totalFinal && (
+              {kwp > 0 && totalFinalNum > 0 && (
                 <div className="text-xs text-muted-foreground mt-1">
-                  R$ {((parseFloat((proposta.totalFinal || "0").replace(",", ".")) || 0) / kwp).toFixed(2).replace(".", ",")}/kWp
+                  R$ {(totalFinalNum / kwp).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWp
                 </div>
               )}
             </div>
@@ -258,11 +322,90 @@ export default function PropostaView() {
           <Button variant="outline" className="flex-1" onClick={() => navigate("/propostas")}>
             <ArrowLeft className="w-4 h-4 mr-1" /> Minhas Propostas
           </Button>
+          <Button variant="outline" className="flex-1" onClick={() => setShowContratoDialog(true)}>
+            <FileSignature className="w-4 h-4 mr-1" /> Gerar Contrato
+          </Button>
           <Button className="flex-1" onClick={handlePrint}>
             <Printer className="w-4 h-4 mr-1" /> Imprimir / PDF
           </Button>
         </div>
       </div>
+
+      <Dialog open={showContratoDialog} onOpenChange={(open) => { setShowContratoDialog(open); if (!open) setSelectedContratoId(""); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSignature className="w-5 h-5 text-primary" />
+              Gerar Contrato — {proposta.clienteNome}
+            </DialogTitle>
+          </DialogHeader>
+
+          {!proposta.vendaId ? (
+            <div className="flex items-start gap-2 text-sm text-orange-600 bg-orange-50 border border-orange-200 rounded-lg p-3">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <p>Esta proposta não está vinculada a uma venda no funil. Acesse o Funil de Vendas e gere o contrato a partir do card do cliente.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Selecione um modelo de contrato Word (.docx). O sistema preencherá automaticamente os dados do cliente e da proposta.
+              </p>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Modelo de contrato</label>
+                <Select value={selectedContratoId} onValueChange={setSelectedContratoId}>
+                  <SelectTrigger data-testid="select-contrato-proposta">
+                    <SelectValue placeholder="Selecione um modelo..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(contratos ?? []).length === 0 && (
+                      <SelectItem value="_none" disabled>Nenhum modelo cadastrado</SelectItem>
+                    )}
+                    {(contratos ?? []).map(c => (
+                      <SelectItem key={c.id} value={c.id}>
+                        <span className="flex items-center gap-2">
+                          {(c as any).templateData
+                            ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                            : <AlertCircle className="w-3.5 h-3.5 text-orange-400 shrink-0" />}
+                          {c.nome}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {selectedContratoId && contratoSelecionado && (
+                (contratoSelecionado as any).templateData ? (
+                  <div className="flex items-center gap-1.5 text-xs text-green-600">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Arquivo: <strong>{(contratoSelecionado as any).templateNome}</strong></span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-xs text-orange-500">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>Este modelo não tem arquivo .docx. Vá em <strong>Contratos</strong> e clique em <strong>Anexar Word</strong>.</span>
+                  </div>
+                )
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={() => setShowContratoDialog(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  className="flex-1 gap-2"
+                  data-testid="button-confirmar-contrato"
+                  disabled={!selectedContratoId || gerandoContrato}
+                  onClick={handleGerarContrato}
+                >
+                  {gerandoContrato ? "Gerando..." : <><Download className="w-4 h-4" /> Gerar e Baixar</>}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
