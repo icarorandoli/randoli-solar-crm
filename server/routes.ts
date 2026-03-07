@@ -311,6 +311,68 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Gerar contrato direto pela proposta (sem depender de venda existir)
+  app.post("/api/contratos/:id/gerar-proposta/:propostaId", async (req: Request, res: Response) => {
+    try {
+      const { id, propostaId } = req.params;
+      const [contrato, proposta, todosClientes, todasVendas] = await Promise.all([
+        storage.getContrato(id),
+        storage.getProposta(propostaId),
+        storage.getClientes(),
+        storage.getVendas(),
+      ]);
+
+      if (!contrato) return res.status(404).json({ message: "Contrato não encontrado" });
+      if (!proposta) return res.status(404).json({ message: "Proposta não encontrada" });
+      if (!contrato.templateData) return res.status(400).json({ message: "Este contrato não possui um modelo Word anexado. Faça o upload do arquivo .docx primeiro." });
+
+      const cliente = todosClientes.find(c => c.nome.toLowerCase() === (proposta.clienteNome ?? "").toLowerCase()) ?? null;
+      const venda = (proposta.vendaId ? todasVendas.find(v => v.id === proposta.vendaId) : null)
+        ?? todasVendas.find(v => v.clienteNome.toLowerCase() === (proposta.clienteNome ?? "").toLowerCase())
+        ?? null;
+
+      // Monta venda sintética a partir da proposta caso não exista
+      const vendaEfetiva: Venda = venda ?? {
+        id: proposta.id,
+        clienteNome: proposta.clienteNome,
+        valor: proposta.totalFinal ?? proposta.valor,
+        kwp: proposta.potCalculada ?? proposta.kwp,
+        status: "envio de proposta",
+        proprietario: "GERENTE",
+        temperatura: "",
+        cpf: cliente?.cpf ?? null,
+        email: proposta.email ?? cliente?.email ?? null,
+        telefone: cliente?.telefone ?? null,
+        cidade: proposta.cidade ? `${proposta.cidade}${proposta.uf ? ` - ${proposta.uf}` : ""}` : null,
+        endereco: proposta.endereco ?? cliente?.endereco ?? null,
+        potencia: proposta.potCalculada ?? "0,00",
+        modulos: 0,
+        inversores: 0,
+        topologiaInv: "String",
+        distancia: "0,00",
+        propostas: 1,
+        visualizacoes: 0,
+        notas: 0,
+        validade: proposta.dataValidade ?? null,
+        createdAt: proposta.createdAt,
+      };
+
+      const buffer = Buffer.from(contrato.templateData, "base64");
+      const zip = new PizZip(buffer);
+      const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, errorLogging: false, nullGetter: () => "" });
+      doc.render(buildTagData(vendaEfetiva, cliente, proposta));
+      const output = doc.getZip().generate({ type: "nodebuffer", compression: "DEFLATE" });
+      const nomeArquivo = `${contrato.nome.replace(/[^a-zA-Z0-9\s]/g, "")}_${proposta.clienteNome.replace(/[^a-zA-Z0-9\s]/g, "").substring(0, 30)}.docx`;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(nomeArquivo)}"`);
+      res.send(output);
+    } catch (error: any) {
+      console.error("Generation error:", error);
+      const msg = error?.properties?.errors?.map((e: any) => e.message).join(", ") || error.message || "Erro desconhecido";
+      res.status(500).json({ message: `Erro ao gerar contrato: ${msg}` });
+    }
+  });
+
   app.post("/api/contratos/:id/gerar/:vendaId", async (req: Request, res: Response) => {
     try {
       const { id, vendaId } = req.params;
@@ -322,8 +384,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ]);
 
       if (!contrato) return res.status(404).json({ message: "Contrato não encontrado" });
-      if (!venda) return res.status(404).json({ message: "Venda não encontrada" });
       if (!contrato.templateData) return res.status(400).json({ message: "Este contrato não possui um modelo Word anexado. Faça o upload do arquivo .docx primeiro." });
+
+      // Se não encontrou a venda pelo ID, procura pelo nome
+      const vendaEfetiva = venda ?? null;
+      if (!vendaEfetiva) return res.status(404).json({ message: "Venda não encontrada" });
 
       const cliente = todosClientes.find(c => c.nome.toLowerCase() === (venda.clienteNome ?? "").toLowerCase()) ?? null;
       const propostasVenda = todasPropostas.filter(p => p.vendaId === vendaId);
