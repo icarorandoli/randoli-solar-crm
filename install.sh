@@ -483,6 +483,10 @@ if [ ! -f "$INSTALL_DIR/dist/index.cjs" ]; then
 fi
 ok "Binário de produção: dist/index.cjs ✔"
 
+# Criar diretório de dados persistentes
+mkdir -p "$INSTALL_DIR/data"
+ok "Diretório de dados criado: $INSTALL_DIR/data"
+
 # PM2
 info "Configurando PM2..."
 
