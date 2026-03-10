@@ -305,4 +305,5 @@ export class MemStorage implements IStorage {
   async deleteProposta(id: string) { this.propostasMap.delete(id); }
 }
 
-export const storage = new MemStorage();
+import { FileStorage } from "./file-storage";
+export const storage = new FileStorage();
